@@ -6,6 +6,7 @@ import sys
 import gzip
 import logging
 
+from . import __package_version__
 from .gene_model import VcfGeneModel
 from .utils import flexi_open
 
@@ -37,6 +38,8 @@ class VcfGenome(object):
     Build a new VcfGeneModel and pickle it to disk, or restore a
     previously pickled object.
     '''
+    sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
+
     # Restore pickled object.
     if picklefile is not None:
       try:
@@ -61,7 +64,7 @@ class VcfGenome(object):
         with gzip.open(savefile, 'wb') as pkfh:
           dump(model, pkfh, -1) # fh must be opened in binary mode.
 
-    self._gene_model = model
+    setattr(self, '_gene_model', model)
 
   # The following adapted from
   # http://stackoverflow.com/a/21966266/5555544; see that post for

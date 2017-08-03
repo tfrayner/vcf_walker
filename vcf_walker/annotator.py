@@ -191,7 +191,7 @@ class VcfAnnotator(VcfGenome):
 
     return [ SEVERITY.index(efct) for efct in effects ]
 
-  def find_worst_effects(self, affected, record, altnum=0):
+  def _find_worst_effects(self, affected, record, altnum=0):
     '''
     Given a list of affected CDS records, and a VCF SNV record,
     identify the worst effect that the SNV has on any of the CDS
@@ -202,7 +202,14 @@ class VcfAnnotator(VcfGenome):
 
     worst = SEVERITY[ min(effect_ranks) ]
 
-    return worst
+    # Identify transcript ID.
+    if len(affected) > 0:
+      widx = min(xrange(len(effect_ranks)), key=effect_ranks.__getitem__)
+      txid = get_cds_repr(affected[ widx ].value['cdsobj'])
+    else:
+      txid = ''
+
+    return (worst, txid)
 
   def clean_record_ends(self, record):
     '''
@@ -223,8 +230,8 @@ class VcfAnnotator(VcfGenome):
 
   def add_vep(self, record):
     '''
-    Method adds VEP and TXNSTR INFO tags to the record according to
-    its effects on overlapping CDSs.
+    Method adds VEP, TRANSCRIPT and TXNSTR INFO tags to the record according to
+    its effects on overlapping CDS regions.
     '''
     if record.CHROM not in self.chromosomes:
       raise IndexError(\
@@ -240,10 +247,11 @@ class VcfAnnotator(VcfGenome):
     LOGGER.info("Examining %s:%s (%s -> %s)",
                 record.CHROM, record.POS, record.REF,
                 "".join([ str(x) for x in record.ALT]))
-    worst = [ self.find_worst_effects(affected, record, altnum)
-              for altnum in range(len(record.ALT)) ]
+    worst_by_alt = [ self._find_worst_effects(affected, record, altnum)
+                     for altnum in range(len(record.ALT)) ]
 
-    record.INFO['VEP'] = worst
+    record.INFO['VEP']        = [ x[0] for x in worst_by_alt ]
+    record.INFO['TRANSCRIPT'] = [ x[1] for x in worst_by_alt ]
 
     # Annotate transcription strand.
     strands = list(set([ cds.value['cdsobj'].location.strand
@@ -481,6 +489,8 @@ class VcfAnnotator(VcfGenome):
     vcf_reader.infos['VEP'] = Info(id='VEP', num='A', type='String',
                                    desc='The predicted effect'
                                    + ' of the ALT allele.')
+    vcf_reader.infos['TRANSCRIPT'] = Info(id='TRANSCRIPT', num='A', type='String',
+                                          desc='The affected transcript ID.')
     vcf_reader.infos['CONTEXT'] = Info(id='CONTEXT', num=1, type='String',
                                        desc='The base context of the locus.')
     vcf_reader.infos['TXNSTR'] = Info(id='TXNSTR', num=1, type='String',
