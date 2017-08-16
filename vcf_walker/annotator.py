@@ -1,10 +1,12 @@
 '''
 Classes and functions used to add variant effects and mutational
-context sequence tags to a VCF.
+context sequence tags to a VCF. Strelka format conventions are assumed
+throughout.
 '''
 
 import sys
 import re
+import gzip
 from copy import deepcopy
 from warnings import warn, showwarning, catch_warnings
 from random import uniform, choice
@@ -16,7 +18,7 @@ import vcf
 from vcf.model import _Substitution as VcfSubstitution
 
 from .genome import VcfGenome, LOGGER
-from .utils import AnnotationWarning, flexi_open, is_zipped, cumsum, order
+from .utils import AnnotationWarning, is_zipped, cumsum, order
 from .cds import check_splicesites, decide_indel_or_nonsense, \
   get_cds_repr, trim_hanging_cds_end, spliced_cds_sequence, \
   generate_mutant_cds, get_subfeatures
@@ -38,14 +40,15 @@ class VcfAnnotator(VcfGenome):
   Class designed to annotate variants provided in VCF with some
   information on the variant effects on protein and transcript structure.
   '''
-  def __init__(self, context_bases=3, genotypes=False, homozygous_normal=True,
-               *args, **kwargs):
+  def __init__(self, context_bases=3, vaf=False, genotypes=False,
+               homozygous_normal=True, *args, **kwargs):
 
     super(VcfAnnotator, self).__init__(*args, **kwargs)
 
     self.context_bases     = context_bases
     self.genotypes         = genotypes
     self.homozygous_normal = homozygous_normal
+    self.vaf               = vaf
     
   def generate_ref_objects(self, cds, record, utrlen=0):
     '''
@@ -359,15 +362,15 @@ class VcfAnnotator(VcfGenome):
     elif record.is_snp:
 
       # Assumes this is a Strelka SNV.
-      tier2  = [ getattr(call.data, att)[1] for att in STRELKA_ALLELES ]      # count tier2 reads
-      ord    = order(tier2)
+      tier1  = [ getattr(call.data, att)[0] for att in STRELKA_ALLELES ]      # count tier1 reads
+      ord    = order(tier1)
 
       allowable = record.alleles
 
       # Identify the top allele candidates in descending order;
-      # requires at least two reads to be detected for any given
+      # requires at least two tier1 reads to be detected for any given
       # allele. This is not particularly stringent.
-      gt_all    = [ STRELKA_ALLELES[n][0] for n in ord[::-1] if tier2[n] >= 2 ]
+      gt_all    = [ STRELKA_ALLELES[n][0] for n in ord[::-1] if tier1[n] >= 2 ]
 
       # Filter out invalid alleles.
       gt_all    = [ base for base in gt_all if base in allowable ]
@@ -394,7 +397,7 @@ class VcfAnnotator(VcfGenome):
     else:
       raise ValueError("Record is neither SNV nor indel, and so is unsupported for genotype calling.")
 
-  def calculate_vaf(self, call, record):
+  def calculate_vaf(self, call, record, altnum=None):
     '''
     Calculate the frequency for variant alleles at the given
     locus. Multiple ALT alleles at a given locus are summed together
@@ -404,25 +407,61 @@ class VcfAnnotator(VcfGenome):
     if call.data.DP is None or call.data.DP == 0:
       return None
 
+    # Indels are not going to work here due to differences in Strelka coding.
     if not record.is_snp:
       raise StandardError("VAF calculation for non-SNV records is unsupported.")
 
     # Assumes this is a Strelka SNV.
     tier2 = [ getattr(call.data, att)[1] for att in STRELKA_ALLELES ] # count tier2 reads
 
-    # Find read counts for the allowable allele calls
-    allowable = [ str(n) + 'U' for n in record.alleles ]
-    counts    = [ tier2[ STRELKA_ALLELES.index(n) ] for n in allowable ]
+    # Find read counts for the allowable allele calls; REF is first in list.
+    ref = str(record.REF) + 'U'
+    if altnum is None:
+
+      # Identify the main ALT allele by tier2 read count.
+      allowable = [ str(n) + 'U' for n in record.alleles ]
+      allcounts = [ tier2[ STRELKA_ALLELES.index(n) ] for n in allowable ]
+      counts    = [ allcounts[0], max(allcounts[1:]) ]
+
+    else:
+
+      # Use the specified ALT allele.
+      allowable = [ ref, str(record.ALT[altnum]) + 'U' ]
+      counts    = [ tier2[ STRELKA_ALLELES.index(n) ] for n in allowable ]
 
     # Assumes all normals are homozygous, if that's the desired behaviour.
     if len(counts) == 1 or (self.homozygous_normal and call.sample == 'NORMAL'):
       counts = [ counts[0], 0 ]
 
-    # All ALT alleles taken together, discarding alleles for which
-    # only a single read was detected.
-    vaf = float(sum([ x for x in counts[1:] if x >= 2])) / sum(counts)
+    # All selected ALT alleles summed, discarding highly speculative
+    # alleles for which only a single read was detected.
+    vaf = round(float(sum([ x for x in counts[1:] if x >= 2])) / sum(counts), 3)
 
     return vaf
+
+  def add_vaf(self, record):
+    '''
+    Add Variant Allele Frequency (VAF) calculation to VCF, where each
+    VAF value is the sum of all tier2 ALT allele reads divided by the
+    total tier2 read depth.
+    '''
+    if 'VAF' not in record.FORMAT.split(':'):
+      record.FORMAT = 'VAF:' + record.FORMAT
+
+    for call in record.samples:
+
+      # Calculate VAF for the ALT allele with the greatest number of
+      # tier2 reads.
+      vaf = self.calculate_vaf(call, record)
+
+      fields = call.data._asdict().keys()
+      if 'VAF' in fields:
+        call.data = call.data._replace(VAF=vaf)
+      else:
+        CallData = vcf.model.collections.namedtuple('CallData', ['VAF'] + fields)
+        call.data = CallData(VAF=vaf, **call.data._asdict())
+
+    return record
 
   def _annotate_record(self, record):
     '''
@@ -432,6 +471,9 @@ class VcfAnnotator(VcfGenome):
     record = self.add_vep(record)
 
     record = self.add_context(record)
+
+    if self.vaf:
+      record = self.add_vaf(record)
 
     if self.genotypes:
       record = self.add_genotypes(record)
@@ -480,8 +522,11 @@ class VcfAnnotator(VcfGenome):
 
     return record
 
-  def _initialise_vcf_reader(self, in_fh):
-    vcf_reader = vcf.Reader(in_fh)
+  def _initialise_vcf_reader(self, infile):
+
+    # Gzip file support is deferred to PyVCF itself, but our gzip file
+    # detection is a bit more robust.
+    vcf_reader = vcf.Reader(filename=infile, compressed=is_zipped(infile))
 
     # Not 100% sure this is a supported part of the PyVCF model.
     Info = vcf.model.collections.namedtuple('Info',
@@ -499,10 +544,14 @@ class VcfAnnotator(VcfGenome):
                                       + ' strand. F=Forward, R=Reverse,'
                                       + ' B=Both, N=Neither.')
 
+    Format = vcf.model.collections.namedtuple('Format',
+                                              ['id', 'num', 'type', 'desc'])
     if self.genotypes and 'GT' not in vcf_reader.formats:
-      Format = vcf.model.collections.namedtuple('Format',
-                                                ['id', 'num', 'type', 'desc'])
       vcf_reader.formats['GT'] = Format(id='GT', num=1, type='String', desc='Inferred genotype call.')
+
+    if self.vaf and 'VAF' not in vcf_reader.formats:
+      vcf_reader.formats['VAF'] = Format(id='VAF', num=1, type='Float', desc='Variant Allele Frequency'
+                                         + ' for the primary ALT allele of each sample.')
 
     return vcf_reader
 
@@ -512,40 +561,38 @@ class VcfAnnotator(VcfGenome):
     '''
     warningcount = 0
 
-    # FIXME I'm not sure PyVCF can handle gzip objects?
-    with flexi_open(infile, 'r') as in_fh:
-      vcf_reader = self._initialise_vcf_reader(in_fh)
+    vcf_reader = self._initialise_vcf_reader(infile)
 
-      with open(outfile, 'w') as out_fh:
-        vcf_writer = vcf.Writer(out_fh, vcf_reader)
+    with open(outfile, 'w') as out_fh:
+      vcf_writer = vcf.Writer(out_fh, vcf_reader)
 
-        for record in vcf_reader:
+      for record in vcf_reader:
 
-          if vaf_cutoff is not None:
-            vafs = [ self.calculate_vaf(call, record) for call in record.samples ]
-            fvafs = [ x for x in vafs if x is not None ]
-            if max(fvafs) < vaf_cutoff:
-              continue
+        if vaf_cutoff is not None:
+          vafs = [ self.calculate_vaf(call, record) for call in record.samples ]
+          fvafs = [ x for x in vafs if x is not None ]
+          if max(fvafs) < vaf_cutoff:
+            continue
 
-          if random:
-            record = self._randomise_record(record)
+        if random:
+          record = self._randomise_record(record)
 
-          with catch_warnings(record=True) as warnlist:
-            newrec = self._annotate_record(record)
-            vcf_writer.write_record(newrec)
+        with catch_warnings(record=True) as warnlist:
+          newrec = self._annotate_record(record)
+          vcf_writer.write_record(newrec)
 
-            # Count AnnotationWarnings, show all others.
-            annwarns = 0
-            for wrn in warnlist:
-              if issubclass(wrn.category, AnnotationWarning):
-                annwarns += 1
-              else:
-                showwarning(wrn.message, wrn.category,
-                            wrn.filename, wrn.lineno,
-                            wrn.file, wrn.line)
+          # Count AnnotationWarnings, show all others.
+          annwarns = 0
+          for wrn in warnlist:
+            if issubclass(wrn.category, AnnotationWarning):
+              annwarns += 1
+            else:
+              showwarning(wrn.message, wrn.category,
+                          wrn.filename, wrn.lineno,
+                          wrn.file, wrn.line)
 
-            if annwarns > 0:
-              warningcount += 1
+          if annwarns > 0:
+            warningcount += 1
 
     if warningcount > 0:
       sys.stderr.write("Detected AnnotationWarnings for %d variants.\n"

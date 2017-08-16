@@ -60,9 +60,14 @@ if __name__ == '__main__':
                       + ' This option will include the calculated peptide'
                       + ' sequences in the logging output.')
 
-  PARSER.add_argument('--withgt', dest='genotypes', action='store_true',
+  PARSER.add_argument('--with-gt', dest='genotypes', action='store_true',
                       help='Flag indicating that GT records should be inferred'
                       + ' (Strelka VCFs only, for the moment).')
+
+  PARSER.add_argument('--with-vaf', dest='vaf', action='store_true',
+                      help='Flag indicating that the variant allele frequency'
+                      + ' should be calculated and stored for each locus'
+                      + ' in each sample.')
 
   PARSER.add_argument('--homozygous-normal', dest='homonorm', action='store_true',
                       help='Flag indicating that all samples labelled as NORMAL'
@@ -73,7 +78,7 @@ if __name__ == '__main__':
                       help='The number of context bases to include on'
                       + ' either side of the variant for the CONTEXT tag.')
 
-  PARSER.add_argument('--vaf-cutoff', dest='vaf', type=float, required=False,
+  PARSER.add_argument('--vaf-cutoff', dest='vaf_cutoff', type=float, required=False,
                       help='The VAF threshold that each locus must achieve'
                       + ' before being included in the output. Note that'
                       + ' for loci mutated in multiple samples some calls'
@@ -90,11 +95,12 @@ if __name__ == '__main__':
                         savefile   = ARGS.savefile,
                         context_bases     = ARGS.cxtbases,
                         genotypes         = ARGS.genotypes,
+                        vaf               = ARGS.vaf,
                         homozygous_normal = ARGS.homonorm)
 
   VCFANN.annotate_vcf(infile  = ARGS.infile,
                       outfile = ARGS.outfile,
                       random  = ARGS.random,
-                      vaf_cutoff = ARGS.vaf)
+                      vaf_cutoff = ARGS.vaf_cutoff)
 
   sys.stderr.write("Vcf annotation complete.\n")
