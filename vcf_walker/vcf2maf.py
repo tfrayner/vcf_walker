@@ -12,6 +12,8 @@ import vcf
 from .annotator import VcfAnnotator, LOGGER
 from .utils import AnnotationWarning, flexi_open
 from .cds import get_cds_id
+from .constants import SEVERITY
+from .vcf_meta import VcfMeta
 
 ################################################################################
 
@@ -34,6 +36,9 @@ VEP_MAP = {
   'sequence_variant'        : '', # Nothing really fits as a catch-all.
 }
 
+# A quick check for self-consistency.
+assert all( [ x in VEP_MAP for x in SEVERITY ] )
+
 def _detect_var_type(record):
 
   if len(record.REF) == 1:
@@ -47,16 +52,46 @@ def _detect_var_type(record):
   else:
     raise ValueError("Unexpected reference allele length.") # e.g. indels
 
-class Vcf2Maf(VcfAnnotator):
+################################################################################
+
+class Vcf2Tab(VcfMeta):
   '''
-  Class designed to convert a VCF to MAF, pulling in variant effect
-  annotations as necessary.
-
-  MAF format specification taken from::
-
-  https://wiki.nci.nih.gov/display/TCGA/Mutation+Annotation+Format+(MAF)+Specification
+  Mixin class providing functionality to subclasses
+  dedicated to converting VCF to various tabular formats.
   '''
+  def get_dispatch_table(self):
+    '''
+    This method must be implemented in subclasses to return a dispatch
+    table constructed as a list of 2-element tuples: (column_heading,
+    function).
+    '''
+    raise NotImplementedError()
 
+  def post_init_hook(self, vcf_reader):
+    '''
+    This method is called immediately following VCF reader initialisation,
+    to allow the dispatch table to be modified to include information
+    from the VCF header.
+    '''
+    pass
+
+  def pre_record_hook(self, record):
+    '''
+    This method is called once for each VCF record, prior to any
+    further calculations. It may be used to add annotation to a
+    record prior to writing it out to disk.
+    '''
+    return record
+
+  def _build_tabrow(self, record, altnums, sample):
+    '''
+    Build a list of table row values using the internal dispatch table.
+    '''
+    rowvals = [ str(self._dispatch_column(x[1], record,
+                                          altnums, sample))
+                for x in self.get_dispatch_table() ]
+    return rowvals
+  
   def _dispatch_column(self, disp, record, altnum, sample):
     '''
     Simple dispatch table interpreting method.
@@ -66,62 +101,79 @@ class Vcf2Maf(VcfAnnotator):
     else:
       return disp((record, altnum, sample))
 
-  def add_gene(self, record):
-    '''
-    Method adds GENE_ID and GENE_NAME INFO tags to the record
-    according to its overlapping CDSs.
-    '''
-    if record.CHROM not in self.chromosomes:
-      raise IndexError(\
-        "VCF contains chromosome not found in fasta reference: %s"
-        % record.CHROM)
-
-    record = self.clean_record_ends(record)
-
-    # Annotate variant effect.
-    affected = self.intervaldict[ record.CHROM ].find(record.start,
-                                                      record.end)
-
-    # Annotate record.INFO['GENE_ID'] etc. This is far from ideal as
-    # often we're only given an Ensembl transcript ID rather than
-    # Entrez Gene ID.
-    if len(affected) == 0:
-
-      # No gene hit; probably intergenic. Values here as given by TCGA
-      # spec for "no gene within 3kb".
-      record.INFO['GENE_ID']   = '0'
-      record.INFO['GENE_NAME'] = 'Unknown'
-
-    else:
-      
-      ids = [ get_cds_id(x.value['cdsobj']) for x in affected ]
-      uniqids = list(set(ids))
-      if len(uniqids) == 1:
-
-        # One gene hit; simplest case.
-        gene_id = uniqids[0]
-      else:
-
-        # Multiple gene IDs hit; look for worst effect and pick that gene.
-        LOGGER.info("Multiple genes for record %s:%s; picking worst-hit gene.", record.CHROM, record.POS)
-        effect_ranks = self.effects_by_affected(affected, record)
-        gene_id = ids[effect_ranks.index(min(effect_ranks))]
-
-      record.INFO['GENE_ID']   = gene_id
-      record.INFO['GENE_NAME'] = gene_id
-
-    return record
-
-  def convert(self, infile, outfile,
-              center='cruk.cam.ac.uk', control='control', status='Somatic',
-              source='WGS', sequencer='Illumina X10'):
+  def convert(self, infile, outfile):
     '''
     Read in a VCF and write out a MAF file.
     '''
+    with flexi_open(infile, 'r') as in_fh:
+      vcf_reader = vcf.Reader(in_fh)
+
+      self.post_init_hook(vcf_reader)
+
+      warningcount = 0
+
+      with open(outfile, 'w') as out_fh:
+
+        # Header line.
+        out_fh.write("\t".join([ x[0] for x in self.get_dispatch_table() ]) + "\n")
+        
+        for record in vcf_reader:
+          with catch_warnings(record=True) as warnlist:
+            record = self.pre_record_hook(record)
+
+            # One row per sample:snv call. Multiallelic records need handling.
+            for call in record.samples:
+              altnums = self.call_snv_genotype(call, record)
+              if altnums is not None and max(altnums) > 0:
+
+                # This should handle 0/1, 0/2, 1/1, 1/2 etc. (altnum
+                # of -1 will indicate REF).
+                altnums = [ x - 1 for x in altnums ]
+                rowvals = self._build_tabrow(record, altnums, call.sample)
+                out_fh.write("\t".join(rowvals) + "\n")
+
+            # Count AnnotationWarnings, show all others.
+            annwarns = 0
+            for wrn in warnlist:
+              if issubclass(wrn.category, AnnotationWarning):
+                annwarns += 1
+              else:
+                showwarning(wrn.message, wrn.category,
+                            wrn.filename, wrn.lineno,
+                            wrn.file, wrn.line)
+
+            if annwarns > 0:
+              warningcount += 1
+
+    # Finally, report on AnnotationWarnings (typically non-consecutive exons).
+    if warningcount > 0:
+      sys.stderr.write("Detected AnnotationWarnings for %d variants.\n"
+                       % warningcount)
+
+
+################################################################################
+
+class Vcf2Maf(VcfAnnotator, Vcf2Tab):
+  '''
+  Class designed to convert a VCF to MAF, pulling in variant effect
+  annotations as necessary.
+
+  MAF format specification taken from::
+
+  https://wiki.nci.nih.gov/display/TCGA/Mutation+Annotation+Format+(MAF)+Specification
+  '''
+
+  def __init__(self, center='cruk.cam.ac.uk', control='control', status='Somatic',
+               source='WGS', sequencer='Illumina X10', *args, **kwargs):
+
+    super(Vcf2Maf, self).__init__(*args, **kwargs)
+
+    # TRANSCRIPT and VEP tags below are included by the call to
+    # self.add_vep in the Vcf2Tab superclass.
     self._dispatch_table = [
-      ('Hugo_Symbol',                    lambda (x): x[0].INFO['GENE_NAME'] ),
+      ('Hugo_Symbol',                    lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
       # NOTE this is not actually Entrez.
-      ('Entrez_Gene_Id',                 lambda (x): x[0].INFO['GENE_ID'] ),
+      ('Entrez_Gene_Id',                 lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
       ('Center',                         center),
       # Will be set from Vcf header upon initial file open.
       ('NCBI_Build',                     None),
@@ -160,64 +212,79 @@ class Vcf2Maf(VcfAnnotator):
       ('Tumor_Sample_UUID',              lambda (x): x[2] ),
       ('Matched_Norm_Sample_UUID',       control),
     ]
-    
-    with flexi_open(infile, 'r') as in_fh:
-      vcf_reader = vcf.Reader(in_fh)
 
-      # Genome assembly information is stored in the VCF header.
+  def get_dispatch_table(self):
+    return self._dispatch_table
+
+  def post_init_hook(self, vcf_reader):
+    '''
+    Retrieve genome assembly information from the VCF header. The
+    exact location seems to vary with different PyVCF versions. We
+    fall back to the 'reference' tag if contig information does not
+    include the assembly.
+    '''
+    assembly = None
+
+    if hasattr(vcf_reader, 'contigs'): # PyVCF 0.6.4 and above
+      contigs = dict(vcf_reader.contigs).values()
+      if hasattr(contigs[0], 'assembly'): # Not yet supported in PyVCF 0.6.8.
+        assembs = list(set([ x.assembly.strip('"') for x in contigs ]))
+        assembly = ";".join(assembs)
+
+    if assembly is None: # Fall back to generic header tags.
       mdat = dict(vcf_reader.metadata)
       if 'contig' in mdat and 'assembly' in mdat['contig'][0]:
         assembs = list(set([ x['assembly'].strip('"') for x in mdat['contig'].values() ]))
         assembly = ";".join(assembs)
+
+      elif 'reference' in mdat: # This is the most likely fallback at the moment.
+        assembly = mdat['reference']
+        
       else:
         assembly = 'unknown'
 
-      # Modify the dispatch table on the fly.
-      assert self._dispatch_table[3][0] == 'NCBI_Build'
-      self._dispatch_table[3] = ('NCBI_Build', assembly)
+    # Modify the dispatch table on the fly.
+    assert self._dispatch_table[3][0] == 'NCBI_Build'
+    self._dispatch_table[3] = ('NCBI_Build', assembly)
 
-      warningcount = 0
+    return
 
-      with open(outfile, 'w') as out_fh:
+  def pre_record_hook(self, record):
+    '''
+    Add variant consequence (VEP) and affected TRANSCRIPT tags to the record.
+    '''
+    if any( [ x not in record.INFO for x in ('VEP','TRANSCRIPT') ] ):
+      LOGGER.info("Inferring VEP tag for record %s:%s", record.CHROM, record.POS)
+      record = self.add_vep(record)
 
-        # Header line.
-        out_fh.write("\t".join([ x[0] for x in self._dispatch_table ]) + "\n")
-        
-        for record in vcf_reader:
-          with catch_warnings(record=True) as warnlist:
-            if 'VEP' not in record.INFO:
-              LOGGER.info("Inferring VEP tag for record %s:%s", record.CHROM, record.POS)
-              record = self.add_vep(record)
+    return record
 
-            record = self.add_gene(record)
+################################################################################
 
-            # One row per sample:snv call. Multiallelic records need handling.
-            for sampnum in range(len(record.samples)):
-              call = record.samples[sampnum]
-              if call.data.GT not in (None, '0/0'):
+class Vcf2OncodriveFML(Vcf2Tab):
+  '''
+  A somewhat overengineered class which simply converts VCF to the
+  tab-delimited format expected by OncodriveFML.
+  '''
+  # Currently this class does not need to access the VcfGeneModel
+  # annotation despite requiring it for initialisation. FIXME remove
+  # this initialisation requirement, possibly by converting Vcf2Tab to
+  # a mixin and moving annotation code into Vcf2Maf.
 
-                # This should handle 0/1, 0/2, 1/1, 1/2 etc. (altnum
-                # of -1 will indicate REF).
-                altnums = [ int(x) - 1 for x in call.data.GT.split('/') ]
-                rowvals = [ str(self._dispatch_column(x[1], record,
-                                                      altnums, call.sample))
-                            for x in self._dispatch_table ]
-                out_fh.write("\t".join(rowvals) + "\n")
+  def __init__(self, *args, **kwargs):
 
-            # Count AnnotationWarnings, show all others.
-            annwarns = 0
-            for wrn in warnlist:
-              if issubclass(wrn.category, AnnotationWarning):
-                annwarns += 1
-              else:
-                showwarning(wrn.message, wrn.category,
-                            wrn.filename, wrn.lineno,
-                            wrn.file, wrn.line)
+    super(Vcf2OncodriveFML, self).__init__(*args, **kwargs)
 
-            if annwarns > 0:
-              warningcount += 1
+    self._dispatch_table = [
+      ('CHROMOSOME', lambda (x): x[0].CHROM ),
+      ('POSITION',   lambda (x): x[0].POS ),
+      ('REF',        lambda (x): x[0].REF),
+      # This line picks out the appropriate ALT allele. Note that this
+      # is assuming Het throughout (ignores the first allele in the
+      # genotype)
+      ('ALT',        lambda (x): x[0].REF if x[1][1] < 0 else str(x[0].ALT[x[1][1]]) ),
+      ('SAMPLE',     lambda (x): x[2] ),
+    ]
 
-    # Finally, report on AnnotationWarnings (typically non-consecutive exons).
-    if warningcount > 0:
-      sys.stderr.write("Detected AnnotationWarnings for %d variants.\n"
-                       % warningcount)
+  def get_dispatch_table(self):
+    return self._dispatch_table

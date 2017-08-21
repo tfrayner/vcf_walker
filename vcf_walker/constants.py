@@ -31,3 +31,12 @@ SEVERITY = (STGN, STLS, FRSH, SRLS, SPAC, SPDN,
 # A regex matching null allele representations.
 NULLPATT = re.compile('[-]')
 
+################################################################################
+
+# Strelka coding conventions.
+STRELKA_INDELS = {'ref' : '0/0',
+                  'het' : '0/1',
+                  'hom' : '1/1'}
+
+STRELKA_ALLELES = ('AU','CU','GU','TU')
+

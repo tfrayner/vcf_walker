@@ -7,6 +7,7 @@ import gzip
 import logging
 
 from . import __package_version__
+from .vcf_meta import VcfMeta
 from .gene_model import VcfGeneModel
 from .utils import flexi_open
 
@@ -23,22 +24,22 @@ class NonDelegatableItem(AttributeError):
 
 ################################################################################
 
-class VcfGenome(object):
+class VcfGenome(VcfMeta):
   '''
   Class used to manage VcfGeneModel instances.
   '''
-  __slots__ = ('_gene_model',)
-
   # These attributes are currently all delegated to self._gene_model
   _delegated_attrs = ('chromosomes', 'intervaldict',
                       'chrlen_cumsums', 'chridx')
 
-  def __init__(self, picklefile, fasta, gtf, savefile):
+  def __init__(self, picklefile, fasta, gtf, savefile, *args, **kwargs):
     '''
     Build a new VcfGeneModel and pickle it to disk, or restore a
     previously pickled object.
     '''
     sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
+
+    super(VcfGenome, self).__init__(*args, **kwargs)
 
     # Restore pickled object.
     if picklefile is not None:

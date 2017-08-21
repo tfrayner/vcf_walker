@@ -48,11 +48,6 @@ if __name__ == '__main__':
                       + ' object to (for later reloading; this is much faster'
                       + ' than rebuilding from scratch every time).')
 
-  PARSER.add_argument('-r', '--random', dest='random', action='store_true',
-                      help='Indicates that the script should generate'
-                      + ' randomised SNVs in the output. This may be used'
-                      + ' for generating null distributions.')
-
   PARSER.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                       help='Increase verbosity of the output (substantially).'
                       + ' This option will include the calculated peptide'
