@@ -40,5 +40,6 @@ setup(
     'biopython>=1.66',
     'PyVCF>=0.6.7',
     'bcbio-gff>=0.6.2',
+    'scipy>=0.10.0',
   ],
 )

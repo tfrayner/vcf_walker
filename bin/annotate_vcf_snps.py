@@ -69,6 +69,26 @@ if __name__ == '__main__':
                       + ' should be calculated and stored for each locus'
                       + ' in each sample.')
 
+  PARSER.add_argument('--without-effect', dest='noeffect', action='store_true',
+                      help='Flag indicating that the inference of variant'
+                      + ' effects on coding sequences should be skipped'
+                      + ' (e.g. for performance reasons).')
+
+  PARSER.add_argument('--without-context', dest='nocontext', action='store_true',
+                      help='Flag indicating that the nucleotide context'
+                      + ' need not be included in the output'
+                      + ' (e.g. for performance reasons).')
+
+  PARSER.add_argument('--filter-germline', dest='germline', action='store_true',
+                      help='Flag indicating that germline contamination due to'
+                      + ' samples sharing tumour sources should be detected and flagged.')
+
+  PARSER.add_argument('--source-regex', dest='src_regex', type=str, default=r'_(\d{5})_',
+                      help='Regex used to pull out source ID from the sample IDs'
+                      + ' stored in the VCF. The first capture group should'
+                      + ' correspond to the source ID. Used in conjunction'
+                      + ' with the --filter-germline option.')
+
   PARSER.add_argument('--homozygous-normal', dest='homonorm', action='store_true',
                       help='Flag indicating that all samples labelled as NORMAL'
                       + ' should be assumed to be homozygous (used in the'
@@ -96,6 +116,10 @@ if __name__ == '__main__':
                         context_bases     = ARGS.cxtbases,
                         genotypes         = ARGS.genotypes,
                         vaf               = ARGS.vaf,
+                        effect            = not ARGS.noeffect,
+                        context           = not ARGS.nocontext,
+                        filter_germline   = ARGS.germline,
+                        source_regex      = ARGS.src_regex,
                         homozygous_normal = ARGS.homonorm)
 
   VCFANN.annotate_vcf(infile  = ARGS.infile,

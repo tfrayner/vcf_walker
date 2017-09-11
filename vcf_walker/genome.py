@@ -6,7 +6,6 @@ import sys
 import gzip
 import logging
 
-from . import __package_version__
 from .vcf_meta import VcfMeta
 from .gene_model import VcfGeneModel
 from .utils import flexi_open
@@ -33,37 +32,49 @@ class VcfGenome(VcfMeta):
                       'chrlen_cumsums', 'chridx')
 
   def __init__(self, picklefile, fasta, gtf, savefile, *args, **kwargs):
+
+    super(VcfGenome, self).__init__(*args, **kwargs)
+
+    setattr(self, '_gene_model', None)
+    setattr(self, '_picklefile', picklefile)
+    setattr(self, '_fasta',      fasta)
+    setattr(self, '_gtf',        gtf)
+    setattr(self, '_savefile',   savefile)
+
+  def _read_gene_model(self):
     '''
     Build a new VcfGeneModel and pickle it to disk, or restore a
     previously pickled object.
     '''
-    sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
-
-    super(VcfGenome, self).__init__(*args, **kwargs)
+    model = None
 
     # Restore pickled object.
-    if picklefile is not None:
+    if self._picklefile is not None:
       try:
         from cPickle import load
       except ImportError:
         from pickle import load
       sys.stderr.write("Loading VcfGeneModel object from file...\n")
-      with flexi_open(picklefile, 'rb') as pkfh:
+      with flexi_open(self._picklefile, 'rb') as pkfh:
         model = load(pkfh)
 
     # FASTA + GTF object initialisation.
-    if fasta is not None:
-      if gtf is None:
+    if self._fasta is not None:
+      if self._gtf is None:
         raise StandardError("Must provide GTF file containing gene model (-g).")
-      model = VcfGeneModel(fasta = fasta, gtf = gtf)
-      if savefile is not None:
+      model = VcfGeneModel(fasta = self._fasta, gtf = self._gtf)
+      if self._savefile is not None:
         try:
           from cPickle import dump
         except ImportError:
           from pickle import dump
         sys.stderr.write("Dumping VcfGeneModel object to file...\n")
-        with gzip.open(savefile, 'wb') as pkfh:
+        with gzip.open(self._savefile, 'wb') as pkfh:
           dump(model, pkfh, -1) # fh must be opened in binary mode.
+
+    if model is None:
+      raise StandardError("No FASTA+GTF or saved genome metadata files provided."
+                          + " Unable to build in-memory gene model")
 
     setattr(self, '_gene_model', model)
 
@@ -83,6 +94,13 @@ class VcfGenome(VcfMeta):
     to this class instance.
     '''
     self._check_attr_name_is_delegated(attr_name)
+
+    # This is where the gene model is actually loaded, upon first
+    # access to a delegated attribute.
+    if self._gene_model is None:
+      self._read_gene_model()
+
     attribute = getattr(self._gene_model, attr_name)
     setattr(self, attr_name, attribute)
+
     return attribute

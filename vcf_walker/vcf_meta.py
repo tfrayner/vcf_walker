@@ -10,6 +10,7 @@ from warnings import warn
 
 import vcf
 
+from . import __package_version__
 from .utils import AnnotationWarning, order
 from .constants import STRELKA_INDELS, STRELKA_ALLELES
 
@@ -26,6 +27,7 @@ class VcfMeta(object):
   Class used to handle basic metadata calculations for VCFs.
   '''
   def __init__(self, homozygous_normal=True):
+    sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
     self.homozygous_normal = homozygous_normal
 
   def add_genotypes(self, record):

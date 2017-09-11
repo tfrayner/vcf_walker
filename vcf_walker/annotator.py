@@ -16,6 +16,10 @@ from Bio.SeqFeature import FeatureLocation
 
 import vcf
 from vcf.model import _Substitution as VcfSubstitution
+from vcf.model import _Record       as VcfRecord
+from vcf.model import _Call         as VcfCall
+
+from scipy.stats import binom_test
 
 from .genome import VcfGenome, LOGGER
 from .utils import AnnotationWarning, is_zipped, cumsum, order
@@ -32,15 +36,25 @@ class VcfAnnotator(VcfGenome):
   Class designed to annotate variants provided in VCF with some
   information on the variant effects on protein and transcript structure.
   '''
-  def __init__(self, context_bases=3, vaf=False, genotypes=False,
+  def __init__(self, context_bases=3,
+               vaf=False, genotypes=False,
+               effect=True, context=True,
+               filter_germline=False, source_regex=r'_(\d{5})_',
                *args, **kwargs):
 
     super(VcfAnnotator, self).__init__(*args, **kwargs)
 
     self.context_bases     = context_bases
-    self.genotypes         = genotypes
+
+    # filter_germline uses genotype information, so we just activate
+    # the genotypes option here.
+    self.genotypes         = genotypes or filter_germline
     self.vaf               = vaf
-    
+    self.effect            = effect
+    self.context           = context
+    self.filter_germline   = filter_germline
+    self.source_regex      = re.compile(source_regex)
+
   def generate_ref_objects(self, cds, record, utrlen=0):
     '''
     Generates a copy of the CDS and record objects alongside a
@@ -224,7 +238,7 @@ class VcfAnnotator(VcfGenome):
 
   def add_vep(self, record):
     '''
-    Method adds VEP, TRANSCRIPT and TXNSTR INFO tags to the record according to
+    Method adds EFFECT, TRANSCRIPT and TXNSTR INFO tags to the record according to
     its effects on overlapping CDS regions.
     '''
     if record.CHROM not in self.chromosomes:
@@ -244,7 +258,7 @@ class VcfAnnotator(VcfGenome):
     worst_by_alt = [ self._find_worst_effects(affected, record, altnum)
                      for altnum in range(len(record.ALT)) ]
 
-    record.INFO['VEP']        = [ x[0] for x in worst_by_alt ]
+    record.INFO['EFFECT']     = [ x[0] for x in worst_by_alt ]
     record.INFO['TRANSCRIPT'] = [ x[1] for x in worst_by_alt ]
 
     # Annotate transcription strand.
@@ -264,6 +278,10 @@ class VcfAnnotator(VcfGenome):
     Method adds CONTEXT tag to the record, based on
     the underlying genome sequence.
     '''
+    cxtbases = self.context_bases
+    if cxtbases == 0:
+      return record
+
     if record.CHROM not in self.chromosomes:
       raise IndexError(\
         "VCF contains chromosome not found in fasta reference: %s"
@@ -289,7 +307,6 @@ class VcfAnnotator(VcfGenome):
         record.end   = record.end + 1
 
     # Annotate base context.
-    cxtbases = self.context_bases
     context = list(chrom[ record.start - cxtbases:record.end + cxtbases ]\
                      .seq.tostring().upper())
     contend = cxtbases + record.end - record.start
@@ -306,14 +323,94 @@ class VcfAnnotator(VcfGenome):
 
     return record
 
+  def flag_germline_variants(self, record, alpha=0.05): # FIXME is 0.05 appropriate?
+    '''
+    Method identifies sample/record signs of germline contamination
+    and returns a list of such records, split into multiple source
+    groups if necessary, annotated with an appropriate FILTER flag.
+    
+    The algorithm is briefly described as follows: calculate overall
+    mutation rate across all variants. For each source group
+    containing 2 or more samples, run a binomial test to see if
+    mutation rate within that source is significantly higher than the
+    overall rate. If so, split those samples out into a new record and
+    add a FILTER flag to it. Eventually there should be one record per
+    germline-contaminated source (FILTER GermlineVariant) and
+    everything else restricted to its original record (FILTER PASS).
+    '''
+    source_matches = [ self.source_regex.search(call.sample) for call in record.samples ]
+    sources        = [ mobj.group(1) for mobj in source_matches ]
+    srcset         = list(set(sources))
+
+    records = [ record ]
+    
+    baseline = sum([ call.data.GT != '.' for call in record.samples ]) / float(len(record.samples))
+
+    formtags = record.FORMAT.split(':')
+    nullform = dict( ( x, '.' ) for x in formtags )
+
+    # FIXME consider numpy data structures throughout, in case they're faster.
+    for src in srcset:
+      is_src = [ x == src for x in sources ]
+      if sum(is_src) > 1:
+        hits = [ is_src[n] and record.samples[n].data.GT != '.' for n in range(len(sources)) ]
+        if binom_test(sum(hits), sum(is_src), baseline, alternative='greater') < alpha:
+
+          # Deal with problem SNVs here.
+          LOGGER.warning("Probable germline contaminant variant identified: %s" % record)
+
+          # First determine whether we even need to split the record.
+          if sum([ not is_src[n] and record.samples[n].data.GT != '.' for n in range(len(sources)) ]) == 0:
+
+            # No non-src hits; set the flag and move on.
+            record.FILTER += [ 'GermlineVariant' ]
+          
+          else:
+
+            # Otherwise, deep copy the record and modify the FORMAT
+            # fields for record.samples appropriately. Also append the
+            # src string to the new record.ID. Check that the
+            # delimiter is valid in VCF.
+            newrec = deepcopy(record)
+            newrec.FILTER += [ 'GermlineVariant' ]
+            newrec.ID += '|%s' % src
+
+            for n in range(len(record.samples)):
+              if is_src[n]:
+
+                # Remove germline SNV metadata from original record
+                record.samples[n].data = record.samples[n].data._replace(**nullform)
+
+              else:
+
+                # Remove possibly-good SNV metadata from the germline record
+                newrec.samples[n].data = newrec.samples[n].data._replace(**nullform)
+
+            records += [ newrec ]
+
+    return records
+
   def _annotate_record(self, record):
     '''
     Method annotates a given record (variant effects, and a number of
-    context positions).
+    context positions). The return value is a list of records, to
+    support cases where a record has to be split.
     '''
-    record = self.add_vep(record)
 
-    record = self.add_context(record)
+    # At some point we'll need actual record IDs, which are not always
+    # present.
+    if record.ID is None:
+      record.ID = ("%s:%s_%s/%s"
+                   % (record.CHROM,
+                      record.POS,
+                      record.REF,
+                      ",".join([ str(x) for x in record.ALT ])))
+      
+    if self.effect:
+      record = self.add_vep(record)
+
+    if self.context:
+      record = self.add_context(record)
 
     if self.vaf:
       record = self.add_vaf(record)
@@ -321,7 +418,11 @@ class VcfAnnotator(VcfGenome):
     if self.genotypes:
       record = self.add_genotypes(record)
 
-    return record
+    if self.filter_germline:
+      return self.flag_germline_variants(record)
+
+    else:
+      return [ record ]
 
   def _randomise_record(self, record):
     '''
@@ -374,7 +475,7 @@ class VcfAnnotator(VcfGenome):
     # Not 100% sure this is a supported part of the PyVCF model.
     Info = vcf.model.collections.namedtuple('Info',
                                             ['id', 'num', 'type', 'desc'])
-    vcf_reader.infos['VEP'] = Info(id='VEP', num='A', type='String',
+    vcf_reader.infos['EFFECT'] = Info(id='EFFECT', num='A', type='String',
                                    desc='The predicted effect'
                                    + ' of the ALT allele.')
     vcf_reader.infos['TRANSCRIPT'] = Info(id='TRANSCRIPT', num='A', type='String',
@@ -395,6 +496,13 @@ class VcfAnnotator(VcfGenome):
     if self.vaf and 'VAF' not in vcf_reader.formats:
       vcf_reader.formats['VAF'] = Format(id='VAF', num=1, type='Float', desc='Variant Allele Frequency'
                                          + ' for the primary ALT allele of each sample.')
+
+    if self.filter_germline and 'GermlineVariant' not in vcf_reader.filters:
+      Filter = vcf.model.collections.namedtuple('Filter',
+                                                ['id', 'desc'])
+      vcf_reader.filters['GermlineVariant'] = Filter(id='GermlineVariant',
+                                                     desc='Variant is likely to be a germline contaminant'
+                                                     + ' due to shared tumour origin across multiple samples.')
 
     return vcf_reader
 
@@ -421,8 +529,9 @@ class VcfAnnotator(VcfGenome):
           record = self._randomise_record(record)
 
         with catch_warnings(record=True) as warnlist:
-          newrec = self._annotate_record(record)
-          vcf_writer.write_record(newrec)
+          newrecs = self._annotate_record(record)
+          for rec in newrecs:
+            vcf_writer.write_record(rec)
 
           # Count AnnotationWarnings, show all others.
           annwarns = 0
