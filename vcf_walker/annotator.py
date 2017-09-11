@@ -353,7 +353,7 @@ class VcfAnnotator(VcfGenome):
     sources        = [ mobj.group(1) for mobj in source_matches ]
     srcset         = list(set(sources))
 
-    records = [ record ]
+    records = []
 
     formtags = record.FORMAT.split(':')
     nullform = dict( ( x, None ) for x in formtags )
@@ -433,6 +433,10 @@ class VcfAnnotator(VcfGenome):
                 newrec.samples[n].data = newrec.samples[n].data._replace(**nullform)
 
             records += [ newrec ]
+
+    # No need to include the stripped record if there's nothing of interest remaining.
+    if any([ record.samples[n].data.GT is not None for n in range(len(record.samples)) ]):
+      records = [ record ] + records
 
     return records
 
