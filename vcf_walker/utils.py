@@ -70,3 +70,26 @@ def rank(x):
   for i in range(L):
     ranks[ordering[i]] = i
   return ranks
+
+# The following from https://stackoverflow.com/a/27758326 and edited
+# to switch to sample STDEV and to only calculate the mean once.
+def mean(data):
+    """
+    Return the sample arithmetic mean of data.
+    """
+    n = len(data)
+    if n < 1:
+        raise ValueError('mean requires at least one data point')
+    return sum(data)/float(n)
+
+def mean_and_sstdev(data):
+    """
+    Calculates the mean and sample standard deviation.
+    """
+    n = len(data)
+    if n < 2:
+        raise ValueError('variance requires at least two data points')
+    mu = mean(data)
+    ss = sum((x-mu)**2 for x in data)
+    pvar = ss/(n-1) # the sample variance
+    return (mu, pvar**0.5)

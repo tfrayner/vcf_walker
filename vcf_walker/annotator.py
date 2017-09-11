@@ -19,10 +19,10 @@ from vcf.model import _Substitution as VcfSubstitution
 from vcf.model import _Record       as VcfRecord
 from vcf.model import _Call         as VcfCall
 
-from scipy.stats import binom_test
+from math import sqrt
 
 from .genome import VcfGenome, LOGGER
-from .utils import AnnotationWarning, is_zipped, cumsum, order
+from .utils import AnnotationWarning, is_zipped, cumsum, order, mean_and_sstdev
 from .cds import check_splicesites, decide_indel_or_nonsense, \
   get_cds_repr, trim_hanging_cds_end, spliced_cds_sequence, \
   generate_mutant_cds, get_subfeatures
@@ -323,44 +323,90 @@ class VcfAnnotator(VcfGenome):
 
     return record
 
-  def flag_germline_variants(self, record, alpha=0.05): # FIXME is 0.05 appropriate?
-    '''
-    Method identifies sample/record signs of germline contamination
-    and returns a list of such records, split into multiple source
-    groups if necessary, annotated with an appropriate FILTER flag.
+  def flag_germline_variants(self, record, threshold=0.05, somatic_likelihood=0.98):
+    '''This method identifies sample/record signs of germline
+    contamination and returns a list of such records, split into
+    multiple source groups if necessary, annotated with an appropriate
+    FILTER flag.
     
-    The algorithm is briefly described as follows: calculate overall
-    mutation rate across all variants. For each source group
-    containing 2 or more samples, run a binomial test to see if
-    mutation rate within that source is significantly higher than the
-    overall rate. If so, split those samples out into a new record and
-    add a FILTER flag to it. Eventually there should be one record per
-    germline-contaminated source (FILTER GermlineVariant) and
-    everything else restricted to its original record (FILTER PASS).
+    The algorithm is briefly described as follows:
+
+    For each locus, calculate the likely minimum read depth available
+    for any uncalled samples, and use that to calculate the
+    theoretical likelihood of missing a germline mutation
+    (i.e. VAF=0.5) for every uncalled sample. This likelihood is then
+    multiplied by (1 - somp), where somp=the likelihood of all calls
+    being somatic rather than germline (based on the specified
+    somatic_likelihood). This is a fudge factor, included to loosen
+    the requirements for classifying variants as somatic in cases
+    where only 2 or 3 samples are taken from a given source. In
+    practice, somatic_likelihood=0.98 will only allow the 2-sample
+    case; increase to 0.985 to include the 3-sample case. Reduce to
+    zero to remove the fudge entirely.
+
+    The reality is that most germline contaminants will be detected as
+    an ALT call in every sample from that mouse, but for low coverage
+    regions we can also accept thresholds a bit lower than 100%.
+
     '''
     source_matches = [ self.source_regex.search(call.sample) for call in record.samples ]
     sources        = [ mobj.group(1) for mobj in source_matches ]
     srcset         = list(set(sources))
 
     records = [ record ]
-    
-    baseline = sum([ call.data.GT != '.' for call in record.samples ]) / float(len(record.samples))
 
     formtags = record.FORMAT.split(':')
-    nullform = dict( ( x, '.' ) for x in formtags )
+    nullform = dict( ( x, None ) for x in formtags )
 
-    # FIXME consider numpy data structures throughout, in case they're faster.
     for src in srcset:
       is_src = [ x == src for x in sources ]
-      if sum(is_src) > 1:
-        hits = [ is_src[n] and record.samples[n].data.GT != '.' for n in range(len(sources)) ]
-        if binom_test(sum(hits), sum(is_src), baseline, alternative='greater') < alpha:
+      num_srcs = sum(is_src)
+      if num_srcs > 1: # Shortcut the heavy processing for the vast majority of variants
+        hits = [ is_src[n] and record.samples[n].data.GT is not None for n in range(len(sources)) ]
+
+        num_vars = sum(hits)
+        if num_vars <= 1: # Some sources will simply have one or no variants at this locus.
+          continue        # We shortcut the calculation in such cases.
+
+        # The minimum read depth that is likely for uncalled samples
+        # (based on the depth at called samples; this assumes bulk
+        # coverage is equivalent across all samples, which for the
+        # current project is a reasonable assumption). The len(depths) must be >= 2.
+        depths = [ record.samples[n].data.DP for n in range(len(sources)) if hits[n] ]
+        (mu, sd) = mean_and_sstdev(depths)
+        lower_bound = mu - (sd / sqrt(num_vars)) # Mean - SEM
+        lower_bound -= 1 # Strelka would need more than one read to call a variant.
+        LOGGER.debug("Lower bound: %.2f", lower_bound)
+
+        # The probability that the uncalled samples are actually false
+        # negatives, and are instead germline variants with VAF of
+        # 0.5.
+        fnp = min( 1, (0.5 ** lower_bound) ** (num_srcs - num_vars) )
+
+        # The probability that none of the called variants are actually
+        # somatic. This is a fudge to allow variants called in 2-3
+        # samples from a single source to contribute to the outcome.
+        somp = 1 - (somatic_likelihood ** num_vars)
+
+        # The probability that this source has germline contamination
+        # (fnp, with the somp fudge).
+        prob_germline = somp * fnp
+
+        LOGGER.debug("Germline probability: %.2f", prob_germline)
+
+        # For threshold = 0.05, this would correspond to one uncalled
+        # sample with minimum likely read depth 5, or two such samples
+        # with min likely read depth 3. More uncalled samples would
+        # usually be interpreted as evidence that this is a somatic
+        # variant.
+        if prob_germline > threshold:
 
           # Deal with problem SNVs here.
-          LOGGER.warning("Probable germline contaminant variant identified: %s" % record)
+          LOGGER.warning("Probable germline contaminant variant identified in source %s: %s", src, record)
 
           # First determine whether we even need to split the record.
-          if sum([ not is_src[n] and record.samples[n].data.GT != '.' for n in range(len(sources)) ]) == 0:
+          if sum([ not is_src[n] and record.samples[n].data.GT is not None
+                   for n in range(len(sources)) ]) == 0:
 
             # No non-src hits; set the flag and move on.
             record.FILTER += [ 'GermlineVariant' ]
