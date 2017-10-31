@@ -405,18 +405,21 @@ class VcfAnnotator(VcfGenome):
     # Not 100% sure this is a supported part of the PyVCF model.
     Info = vcf.model.collections.namedtuple('Info',
                                             ['id', 'num', 'type', 'desc'])
-    vcf_reader.infos['EFFECT'] = Info(id='EFFECT', num='A', type='String',
-                                   desc='The predicted effect'
-                                   + ' of the ALT allele.')
-    vcf_reader.infos['TRANSCRIPT'] = Info(id='TRANSCRIPT', num='A', type='String',
-                                          desc='The affected transcript ID.')
-    vcf_reader.infos['CONTEXT'] = Info(id='CONTEXT', num=1, type='String',
-                                       desc='The base context of the locus.')
-    vcf_reader.infos['TXNSTR'] = Info(id='TXNSTR', num=1, type='String',
-                                      desc='The direction of transcription at'
-                                      + ' the locus, relative to the forward'
-                                      + ' strand. F=Forward, R=Reverse,'
-                                      + ' B=Both, N=Neither.')
+    if self.effect:
+      vcf_reader.infos['EFFECT'] = Info(id='EFFECT', num='A', type='String',
+                                        desc='The predicted effect'
+                                        + ' of the ALT allele.')
+      vcf_reader.infos['TRANSCRIPT'] = Info(id='TRANSCRIPT', num='A', type='String',
+                                            desc='The affected transcript ID.')
+      vcf_reader.infos['TXNSTR'] = Info(id='TXNSTR', num=1, type='String',
+                                        desc='The direction of transcription at'
+                                        + ' the locus, relative to the forward'
+                                        + ' strand. F=Forward, R=Reverse,'
+                                        + ' B=Both, N=Neither.')
+
+    if self.context:
+      vcf_reader.infos['CONTEXT'] = Info(id='CONTEXT', num=1, type='String',
+                                         desc='The base context of the locus.')
 
     Format = vcf.model.collections.namedtuple('Format',
                                               ['id', 'num', 'type', 'desc'])
