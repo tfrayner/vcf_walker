@@ -31,16 +31,22 @@ annotate_vcf_snps.py
   contains the affected transcript ID, predicted variant effect, immediate sequence context, and relationship to transcribed 
   strand for each variant. It is also possible to include the inferred variant allele frequency (VAF) and genotype (GT) 
   information for each variant in the output.
-variant_gene_sequences.py
-  Extract the CDS sequence and translation covering each variant in the supplied VCF, formatting it for readability. This
-  script was originally designed to help with the design of validation PCR primers.
 vcf_to_maf.py
   Converts variants in VCF format to MAF output.
 vcf_to_oncodrivefml.py
   Converts variants in VCF format to the tab-delimited output format expected by OncodriveFML.
+
+The utils directory also contains the following scripts not installed by default:
+
+variant_gene_sequences.py
+  Extract the CDS sequence and translation covering each variant in the supplied VCF, formatting it for readability. This
+  script was originally designed to help with the design of validation PCR primers.
 extract_cds_metadata.py
   This is a relatively simple utility which calculates the GC content and overall CDS length for each feature in a 
   VcfAnnotator object.
+filter_vep_csq.py
+  A very simple script to filter a VCF previously annotated by VEP using user-supplied criteria (e.g., a set of variant sequence
+  ontology tags to ignore).
 
 Credits
 -------
