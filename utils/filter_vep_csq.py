@@ -49,6 +49,11 @@ if __name__ == '__main__':
                       required=True, help="The name of the output VCF file.")
 
   PARSER.add_argument('-f', '--filtered-variants', dest='filters', type=str,
+
+                      # A list of variant consequence types which do
+                      # not explicitly code for nonsynonymous changes,
+                      # and which we generally want to remove from the
+                      # output.
                       default=('synonymous_variant',
                                'intergenic_variant',
                                'intron_variant',
@@ -56,10 +61,14 @@ if __name__ == '__main__':
                                'downstream_gene_variant',
                                'non_coding_transcript_variant',
                                'non_coding_transcript_exon_variant',
+                               'NMD_transcript_variant',
+                               'stop_retained_variant',
+                               'incomplete_terminal_codon_variant',
+                               'coding_sequence_variant',
                                '3_prime_UTR_variant',
                                '5_prime_UTR_variant'),
-                      nargs='+', help="The variant effect SO terms to remove from the output"
-                      + " (note that variants affecting multiple transcript isoforms in"
+                      nargs='+', help="The variant effect SO terms to remove from the output."
+                      + " Note that variants affecting multiple transcript isoforms in"
                       + " different ways may retain some of these terms in the output.")
 
   ARGS = PARSER.parse_args()
