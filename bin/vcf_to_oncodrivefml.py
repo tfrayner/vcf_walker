@@ -38,9 +38,8 @@ if __name__ == '__main__':
   if ARGS.verbose:
     LOGGER.setLevel(logging.INFO)
 
-  VCFCONV = Vcf2OncodriveFML()
+  VCFCONV = Vcf2OncodriveFML(infile  = ARGS.infile)
 
-  VCFCONV.convert(infile  = ARGS.infile,
-                  outfile = ARGS.outfile)
+  VCFCONV.convert(outfile = ARGS.outfile)
 
   sys.stderr.write("Vcf conversion complete.\n")

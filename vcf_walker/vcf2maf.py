@@ -67,10 +67,10 @@ class Vcf2Tab(VcfMeta):
     '''
     raise NotImplementedError()
 
-  def post_init_hook(self, vcf_reader):
+  def post_init_hook(self):
     '''
-    This method is called immediately following VCF reader initialisation,
-    to allow the dispatch table to be modified to include information
+    This method is called prior to reading the first VCF record, to
+    allow the record dispatch table to be modified to include information
     from the VCF header.
     '''
     pass
@@ -101,49 +101,46 @@ class Vcf2Tab(VcfMeta):
     else:
       return disp((record, altnum, sample))
 
-  def convert(self, infile, outfile):
+  def convert(self, outfile):
     '''
     Read in a VCF and write out a MAF file.
     '''
-    with flexi_open(infile, 'r') as in_fh:
-      vcf_reader = vcf.Reader(in_fh)
+    self.post_init_hook()
 
-      self.post_init_hook(vcf_reader)
+    warningcount = 0
 
-      warningcount = 0
+    with open(outfile, 'w') as out_fh:
 
-      with open(outfile, 'w') as out_fh:
-
-        # Header line.
-        out_fh.write("\t".join([ x[0] for x in self.get_dispatch_table() ]) + "\n")
+      # Header line.
+      out_fh.write("\t".join([ x[0] for x in self.get_dispatch_table() ]) + "\n")
         
-        for record in vcf_reader:
-          with catch_warnings(record=True) as warnlist:
-            record = self.pre_record_hook(record)
+      for record in self.reader:
+        with catch_warnings(record=True) as warnlist:
+          record = self.pre_record_hook(record)
 
-            # One row per sample:snv call. Multiallelic records need handling.
-            for call in record.samples:
-              altnums = self.call_snv_genotype(call, record)
-              if altnums is not None and max(altnums) > 0:
+          # One row per sample:snv call. Multiallelic records need handling.
+          for call in record.samples:
+            altnums = self.call_snv_genotype(call, record)
+            if altnums is not None and max(altnums) > 0:
 
-                # This should handle 0/1, 0/2, 1/1, 1/2 etc. (altnum
-                # of -1 will indicate REF).
-                altnums = [ x - 1 for x in altnums ]
-                rowvals = self._build_tabrow(record, altnums, call.sample)
-                out_fh.write("\t".join(rowvals) + "\n")
+              # This should handle 0/1, 0/2, 1/1, 1/2 etc. (altnum
+              # of -1 will indicate REF).
+              altnums = [ x - 1 for x in altnums ]
+              rowvals = self._build_tabrow(record, altnums, call.sample)
+              out_fh.write("\t".join(rowvals) + "\n")
 
-            # Count AnnotationWarnings, show all others.
-            annwarns = 0
-            for wrn in warnlist:
-              if issubclass(wrn.category, AnnotationWarning):
-                annwarns += 1
-              else:
-                showwarning(wrn.message, wrn.category,
-                            wrn.filename, wrn.lineno,
-                            wrn.file, wrn.line)
+          # Count AnnotationWarnings, show all others.
+          annwarns = 0
+          for wrn in warnlist:
+            if issubclass(wrn.category, AnnotationWarning):
+              annwarns += 1
+            else:
+              showwarning(wrn.message, wrn.category,
+                          wrn.filename, wrn.lineno,
+                          wrn.file, wrn.line)
 
-            if annwarns > 0:
-              warningcount += 1
+          if annwarns > 0:
+            warningcount += 1
 
     # Finally, report on AnnotationWarnings (typically non-consecutive exons).
     if warningcount > 0:
@@ -216,7 +213,7 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
   def get_dispatch_table(self):
     return self._dispatch_table
 
-  def post_init_hook(self, vcf_reader):
+  def post_init_hook(self):
     '''
     Retrieve genome assembly information from the VCF header. The
     exact location seems to vary with different PyVCF versions. We
@@ -225,14 +222,14 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
     '''
     assembly = None
 
-    if hasattr(vcf_reader, 'contigs'): # PyVCF 0.6.4 and above
-      contigs = dict(vcf_reader.contigs).values()
+    if hasattr(self.reader, 'contigs'): # PyVCF 0.6.4 and above
+      contigs = dict(self.reader.contigs).values()
       if hasattr(contigs[0], 'assembly'): # Not yet supported in PyVCF 0.6.8.
         assembs = list(set([ x.assembly.strip('"') for x in contigs ]))
         assembly = ";".join(assembs)
 
     if assembly is None: # Fall back to generic header tags.
-      mdat = dict(vcf_reader.metadata)
+      mdat = dict(self.reader.metadata)
       if 'contig' in mdat and 'assembly' in mdat['contig'][0]:
         assembs = list(set([ x['assembly'].strip('"') for x in mdat['contig'].values() ]))
         assembly = ";".join(assembs)

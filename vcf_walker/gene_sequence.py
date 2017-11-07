@@ -38,7 +38,7 @@ class VcfGeneSequence(VcfAnnotator):
     if preferred is None:
       preferred = []
     self.preferred_transcripts = preferred
-    super(VcfAnnotator, self).__init__(*args, **kwargs)
+    super(VcfGeneSequence, self).__init__(*args, **kwargs)
 
   def retrieve_sequence(self, record, utrlen=0):
     '''
@@ -228,7 +228,7 @@ class VcfGeneSequence(VcfAnnotator):
 
     return printstr
 
-  def dump_gene_sequence(self, infile, outfile, utrlen=0, width=50, with_dna_counter=False):
+  def dump_gene_sequence(self, outfile, utrlen=0, width=50, with_dna_counter=False):
     '''
     Read in a VCF and print out gene sequence annotation for the
     variants it contains. Typically this will be used on a tiny subset
@@ -236,36 +236,33 @@ class VcfGeneSequence(VcfAnnotator):
     '''
     warningcount = 0
 
-    with flexi_open(infile, 'r') as in_fh:
-      vcf_reader = vcf.Reader(in_fh)
+    with open(outfile, 'w') as out_fh:
 
-      with open(outfile, 'w') as out_fh:
+      for record in self.reader:
 
-        for record in vcf_reader:
+        with catch_warnings(record=True) as warnlist:
+          cdsseqrec = self.retrieve_sequence(record, utrlen)
 
-          with catch_warnings(record=True) as warnlist:
-            cdsseqrec = self.retrieve_sequence(record, utrlen)
+          if cdsseqrec is None:
+            continue
 
-            if cdsseqrec is None:
-              continue
+          out_fh.write("############### %s ###############\n\n" % cdsseqrec.id)
+          out_fh.write(self.format_output_seqrec(cdsseqrec, utrlen,
+                                                 width=width, with_dna_counter=with_dna_counter))
+          out_fh.write("\n\n")
 
-            out_fh.write("############### %s ###############\n\n" % cdsseqrec.id)
-            out_fh.write(self.format_output_seqrec(cdsseqrec, utrlen,
-                                                   width=width, with_dna_counter=with_dna_counter))
-            out_fh.write("\n\n")
+          # Count AnnotationWarnings, show all others.
+          annwarns = 0
+          for wrn in warnlist:
+            if issubclass(wrn.category, AnnotationWarning):
+              annwarns += 1
+            else:
+              showwarning(wrn.message, wrn.category,
+                          wrn.filename, wrn.lineno,
+                          wrn.file, wrn.line)
 
-            # Count AnnotationWarnings, show all others.
-            annwarns = 0
-            for wrn in warnlist:
-              if issubclass(wrn.category, AnnotationWarning):
-                annwarns += 1
-              else:
-                showwarning(wrn.message, wrn.category,
-                            wrn.filename, wrn.lineno,
-                            wrn.file, wrn.line)
-
-            if annwarns > 0:
-              warningcount += 1
+          if annwarns > 0:
+            warningcount += 1
 
     if warningcount > 0:
       sys.stderr.write("Detected AnnotationWarnings for %d variants.\n"

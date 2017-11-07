@@ -20,7 +20,7 @@ from vcf.model import _Record       as VcfRecord
 from vcf.model import _Call         as VcfCall
 
 from .genome import VcfGenome, LOGGER
-from .utils import AnnotationWarning, is_zipped, cumsum, order, mean_and_sstdev
+from .utils import AnnotationWarning, cumsum, order, mean_and_sstdev
 from .cds import check_splicesites, decide_indel_or_nonsense, \
   get_cds_repr, trim_hanging_cds_end, spliced_cds_sequence, \
   generate_mutant_cds, get_subfeatures
@@ -398,9 +398,7 @@ class VcfAnnotator(VcfGenome):
 
   def _initialise_vcf_reader(self, infile):
 
-    # Gzip file support is deferred to PyVCF itself, but our gzip file
-    # detection is a bit more robust.
-    vcf_reader = vcf.Reader(filename=infile, compressed=is_zipped(infile))
+    vcf_reader = super(VcfAnnotator, self)._initialise_vcf_reader(infile)
 
     # Not 100% sure this is a supported part of the PyVCF model.
     Info = vcf.model.collections.namedtuple('Info',
@@ -439,18 +437,16 @@ class VcfAnnotator(VcfGenome):
 
     return vcf_reader
 
-  def annotate_vcf(self, infile, outfile, random=False, vaf_cutoff=None):
+  def annotate_vcf(self, outfile, random=False, vaf_cutoff=None):
     '''
     Read in a VCF, add annotation and write it back out again.
     '''
     warningcount = 0
 
-    vcf_reader = self._initialise_vcf_reader(infile)
-
     with open(outfile, 'w') as out_fh:
-      vcf_writer = vcf.Writer(out_fh, vcf_reader)
+      vcf_writer = vcf.Writer(out_fh, self.reader)
 
-      for record in vcf_reader:
+      for record in self.reader:
 
         if vaf_cutoff is not None:
           vafs = [ self.calculate_vaf(call, record) for call in record.samples ]

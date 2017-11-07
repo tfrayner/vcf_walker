@@ -51,7 +51,13 @@ if __name__ == '__main__':
     raise StandardError("Will not overwrite pre-existing output file %s"
                         % ARGS.outfile)
 
-  VCFANN = VcfAnnotator(picklefile = ARGS.pickle)
-
+  try:
+    from cPickle import load
+  except ImportError:
+    from pickle import load
+  sys.stderr.write("Loading VcfGeneModel object from file...\n")
+  with flexi_open(ARGS.pickle, 'rb') as pkfh:
+    VCFANN = load(pkfh)
+  
   with open(ARGS.outfile, 'w') as outfh:
     extract_metadata(VCFANN, outfh)

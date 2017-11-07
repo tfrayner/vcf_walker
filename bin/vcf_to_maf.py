@@ -58,12 +58,12 @@ if __name__ == '__main__':
   if ARGS.verbose:
     LOGGER.setLevel(logging.INFO)
 
-  VCFCONV = Vcf2Maf(picklefile = ARGS.pickle,
+  VCFCONV = Vcf2Maf(infile     = ARGS.infile,
+                    picklefile = ARGS.pickle,
                     fasta      = ARGS.fasta,
                     gtf        = ARGS.gtf,
                     savefile   = ARGS.savefile)
 
-  VCFCONV.convert(infile  = ARGS.infile,
-                  outfile = ARGS.outfile)
+  VCFCONV.convert(outfile = ARGS.outfile)
 
   sys.stderr.write("Vcf conversion complete.\n")

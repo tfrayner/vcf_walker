@@ -109,7 +109,8 @@ if __name__ == '__main__':
   if ARGS.verbose:
     LOGGER.setLevel(logging.INFO)
 
-  VCFANN = VcfAnnotator(picklefile = ARGS.pickle,
+  VCFANN = VcfAnnotator(infile     = ARGS.infile,
+                        picklefile = ARGS.pickle,
                         fasta      = ARGS.fasta,
                         gtf        = ARGS.gtf,
                         savefile   = ARGS.savefile,
@@ -122,8 +123,7 @@ if __name__ == '__main__':
                         source_regex      = ARGS.src_regex,
                         homozygous_normal = ARGS.homonorm)
 
-  VCFANN.annotate_vcf(infile  = ARGS.infile,
-                      outfile = ARGS.outfile,
+  VCFANN.annotate_vcf(outfile = ARGS.outfile,
                       random  = ARGS.random,
                       vaf_cutoff = ARGS.vaf_cutoff)
 

@@ -69,10 +69,11 @@ if __name__ == '__main__':
 
   PREF = ARGS.preferred.split(',') if ARGS.preferred is not None else None
 
-  VCFOBJ = VcfGeneSequence(picklefile = ARGS.pickle,
+  VCFOBJ = VcfGeneSequence(infile     = ARGS.infile,
+                           picklefile = ARGS.pickle,
                            fasta      = ARGS.fasta,
                            gtf        = ARGS.gtf,
                            savefile   = ARGS.savefile,
                            preferred  = PREF)
 
-  VCFOBJ.dump_gene_sequence(ARGS.infile, ARGS.outfile, ARGS.utrlen, ARGS.width, ARGS.dnacounter)
+  VCFOBJ.dump_gene_sequence(ARGS.outfile, ARGS.utrlen, ARGS.width, ARGS.dnacounter)

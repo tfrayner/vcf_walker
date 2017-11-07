@@ -14,7 +14,7 @@ from math import sqrt
 import vcf
 
 from . import __package_version__
-from .utils import AnnotationWarning, order, mean_and_sstdev
+from .utils import AnnotationWarning, order, mean_and_sstdev, is_zipped
 from .constants import STRELKA_INDELS, STRELKA_ALLELES
 
 LOGGER = logging.getLogger()
@@ -29,10 +29,16 @@ class VcfMeta(object):
   '''
   Class used to handle basic metadata calculations for VCFs.
   '''
-  def __init__(self, homozygous_normal=True, source_regex=r'_(\d{5})_'):
+  def __init__(self, infile, homozygous_normal=True, source_regex=r'_(\d{5})_'):
     sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
     self.homozygous_normal = homozygous_normal
     self.source_regex      = re.compile(source_regex)
+    self.reader            = self._initialise_vcf_reader(infile)
+
+  def _initialise_vcf_reader(self, infile):
+    # Gzip file support is deferred to PyVCF itself, but our gzip file
+    # detection is a bit more robust.
+    return vcf.Reader(filename=infile, compressed=is_zipped(infile))
 
   def add_genotypes(self, record):
     '''
