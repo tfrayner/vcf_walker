@@ -18,7 +18,11 @@ class VcfFilter(VcfMeta):
                       'intergenic_variant',
                       'intron_variant')):
 
-    # FIXME check that the CSQ tag is defined in the header; abort if not.
+    # Filter out all variants with either no annotated effects, or
+    # annotated effects which are entirely within the filter set.
+    filters = list(filters) + ['']
+
+    # Check that the CSQ tag is defined in the header; abort if not.
     if csqtag in self.reader.infos:
       colstr = re.sub('.*Format: ', '', self.reader.infos[csqtag].desc)
       csqcol = colstr.split(CSQ_DELIM).index('Consequence')
@@ -32,6 +36,7 @@ class VcfFilter(VcfMeta):
         effects = [ csq
                     for csqlist in record.INFO[csqtag]
                     for csq in csqlist.split(CSQ_DELIM)[csqcol].split('&') ]
+
         if any([ item not in filters for item in effects ]):
           vcf_writer.write_record(record)
 
