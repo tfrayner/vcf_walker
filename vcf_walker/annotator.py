@@ -40,8 +40,6 @@ class VcfAnnotator(VcfGenome):
                filter_germline=False,
                *args, **kwargs):
 
-    super(VcfAnnotator, self).__init__(*args, **kwargs)
-
     self.context_bases     = context_bases
 
     # filter_germline uses genotype information, so we just activate
@@ -51,6 +49,8 @@ class VcfAnnotator(VcfGenome):
     self.effect            = effect
     self.context           = context
     self.filter_germline   = filter_germline
+
+    super(VcfAnnotator, self).__init__(*args, **kwargs)
 
   def generate_ref_objects(self, cds, record, utrlen=0):
     '''
