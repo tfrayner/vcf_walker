@@ -70,6 +70,7 @@ if __name__ == '__main__':
                                'stop_retained_variant',
                                'incomplete_terminal_codon_variant',
                                'coding_sequence_variant',
+                               'splice_region_variant',
                                '3_prime_UTR_variant',
                                '5_prime_UTR_variant'),
                       nargs='+', help="The variant effect SO terms to remove from the output."
