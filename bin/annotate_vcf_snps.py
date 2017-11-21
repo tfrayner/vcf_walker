@@ -89,10 +89,15 @@ if __name__ == '__main__':
                       + ' correspond to the source ID. Used in conjunction'
                       + ' with the --filter-germline option.')
 
+  PARSER.add_argument('--lenient-germline', dest='lenientgerm', action='store_true',
+                      help='Flag indicating that the GermlineVariant filter should be'
+                      + ' applied in a more lenient fashion (used with the'
+                      + ' --filter-germline option above).')
+
   PARSER.add_argument('--homozygous-normal', dest='homonorm', action='store_true',
                       help='Flag indicating that all samples labelled as NORMAL'
                       + ' should be assumed to be homozygous (used in the'
-                      + ' context of the --withgt option above).')
+                      + ' context of the --with-gt option above).')
 
   PARSER.add_argument('--context-bases', dest='cxtbases', type=int, default=3,
                       help='The number of context bases to include on'
@@ -109,11 +114,11 @@ if __name__ == '__main__':
   if ARGS.verbose:
     LOGGER.setLevel(logging.INFO)
 
-  VCFANN = VcfAnnotator(infile     = ARGS.infile,
-                        picklefile = ARGS.pickle,
-                        fasta      = ARGS.fasta,
-                        gtf        = ARGS.gtf,
-                        savefile   = ARGS.savefile,
+  VCFANN = VcfAnnotator(infile            = ARGS.infile,
+                        picklefile        = ARGS.pickle,
+                        fasta             = ARGS.fasta,
+                        gtf               = ARGS.gtf,
+                        savefile          = ARGS.savefile,
                         context_bases     = ARGS.cxtbases,
                         genotypes         = ARGS.genotypes,
                         vaf               = ARGS.vaf,
@@ -121,6 +126,7 @@ if __name__ == '__main__':
                         context           = not ARGS.nocontext,
                         filter_germline   = ARGS.germline,
                         source_regex      = ARGS.src_regex,
+                        lenient_germline  = ARGS.lenientgerm,
                         homozygous_normal = ARGS.homonorm)
 
   VCFANN.annotate_vcf(outfile = ARGS.outfile,

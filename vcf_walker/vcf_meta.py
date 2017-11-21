@@ -23,16 +23,22 @@ LOGGER.handlers[0].setFormatter(\
   logging.Formatter("[%(asctime)s]VEPANN_%(levelname)s: %(message)s"))
 LOGGER.setLevel(logging.WARNING)
 
+GERMVAR_TAG = 'GermlineVariant'
+
 ################################################################################
 
 class VcfMeta(object):
   '''
   Class used to handle basic metadata calculations for VCFs.
   '''
-  def __init__(self, infile, homozygous_normal=True, source_regex=r'_(\d{5})_'):
+  def __init__(self, infile,
+               homozygous_normal=True,
+               source_regex=r'_(\d{5})_',
+               lenient_germline=False):
     sys.stdout.write("# Initialising vcf_walker version %s #\n" % __package_version__)
     self.homozygous_normal = homozygous_normal
     self.source_regex      = re.compile(source_regex)
+    self.lenient_germline  = lenient_germline
     self.reader            = self._initialise_vcf_reader(infile)
 
   def _initialise_vcf_reader(self, infile):
@@ -283,22 +289,30 @@ class VcfMeta(object):
           # Deal with problem SNVs here.
           LOGGER.warning("Probable germline contaminant variant identified in source %s: %s", src, record)
 
-          # First determine whether we even need to split the record.
-          if sum([ not is_src[n] and record.samples[n].data.GT is not None
-                   for n in range(len(sources)) ]) == 0:
+          # First determine whether we even need to split the
+          # record. For conservative filtering, we just mark all SNVs
+          # at a dubious locus as germline; otherwise, we check that
+          # there are no variants from out-of-source.
+          if (not self.lenient_germline) or sum([ not is_src[n] and record.samples[n].data.GT is not None
+                                            for n in range(len(sources)) ]) == 0:
 
-            # No non-src hits; set the flag and move on.
-            record.FILTER += [ 'GermlineVariant' ]
+            # No non-src hits, or conservative filtering; set the flag and move on.
+            if GERMVAR_TAG not in record.FILTER:
+              record.FILTER += [ GERMVAR_TAG ]
           
           else:
 
             # Otherwise, deep copy the record and modify the FORMAT
             # fields for record.samples appropriately. Also append the
             # src string to the new record.ID. Check that the
-            # delimiter is valid in VCF.
-            newrec = deepcopy(record)
-            newrec.FILTER += [ 'GermlineVariant' ]
-            newrec.ID += '|%s' % src
+            # delimiter is valid in VCF. Note that the order of
+            # operations here is deliberate; for lenient filtering we
+            # allow records at a GermlineVariant locus to PASS if the
+            # probability is low for that source.
+            newrec         = deepcopy(record)
+            if GERMVAR_TAG not in record.FILTER:
+              newrec.FILTER += [ GERMVAR_TAG ]
+            newrec.ID     += '|%s' % src
 
             for n in range(len(record.samples)):
               if is_src[n]:
