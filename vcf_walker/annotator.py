@@ -25,7 +25,8 @@ from .cds import check_splicesites, decide_indel_or_nonsense, \
   get_cds_repr, trim_hanging_cds_end, spliced_cds_sequence, \
   generate_mutant_cds, get_subfeatures
 from .constants import SYNM, MISS, FRSH, SPAC, SPDN, STGN, STLS, \
-  SRLS, IFIS, IFDL, INTV, INTG, SQVR, SEVERITY, NULLPATT, STRELKA_INDELS, STRELKA_ALLELES
+  SRLS, IFIS, IFDL, INTV, INTG, SQVR, SEVERITY, NULLPATT, \
+  STRELKA_INDELS, STRELKA_ALLELES, VEP_TAG
 
 ################################################################################
 
@@ -255,7 +256,7 @@ class VcfAnnotator(VcfGenome):
     worst_by_alt = [ self._find_worst_effects(affected, record, altnum)
                      for altnum in range(len(record.ALT)) ]
 
-    record.INFO['EFFECT']     = [ x[0] for x in worst_by_alt ]
+    record.INFO[VEP_TAG]      = [ x[0] for x in worst_by_alt ]
     record.INFO['TRANSCRIPT'] = [ x[1] for x in worst_by_alt ]
 
     # Annotate transcription strand.
@@ -404,7 +405,7 @@ class VcfAnnotator(VcfGenome):
     Info = vcf.model.collections.namedtuple('Info',
                                             ['id', 'num', 'type', 'desc'])
     if self.effect:
-      vcf_reader.infos['EFFECT'] = Info(id='EFFECT', num='A', type='String',
+      vcf_reader.infos[VEP_TAG]  = Info(id=VEP_TAG, num='A', type='String',
                                         desc='The predicted effect'
                                         + ' of the ALT allele.')
       vcf_reader.infos['TRANSCRIPT'] = Info(id='TRANSCRIPT', num='A', type='String',

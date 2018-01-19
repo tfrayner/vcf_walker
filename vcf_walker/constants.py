@@ -21,6 +21,8 @@ INTV = 'intron_variant'          # SO:0001627
 INTG = 'intergenic_variant'      # SO:0001628
 SQVR = 'sequence_variant'        # SO:0001060 (fallback)
 
+VEP_TAG = 'EFFECT'
+
 # I guess the effects should probably be ordered in increasing
 # severity thusly: synonymous (LOW), missense (MODERATE), inframe
 # indel (MODERATE), splice site (HIGH), frameshift (HIGH), nonsense

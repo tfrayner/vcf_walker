@@ -12,7 +12,7 @@ import vcf
 from .annotator import VcfAnnotator, LOGGER
 from .utils import AnnotationWarning, flexi_open
 from .cds import get_cds_id
-from .constants import SEVERITY
+from .constants import SEVERITY, VEP_TAG
 from .vcf_meta import VcfMeta
 
 ################################################################################
@@ -39,7 +39,7 @@ VEP_MAP = {
 # A quick check for self-consistency.
 assert all( [ x in VEP_MAP for x in SEVERITY ] )
 
-def _detect_var_type(record):
+def detect_maf_var_type(record):
 
   if len(record.REF) == 1:
     return 'SNP'
@@ -78,28 +78,30 @@ class Vcf2Tab(VcfMeta):
   def pre_record_hook(self, record):
     '''
     This method is called once for each VCF record, prior to any
-    further calculations. It may be used to add annotation to a
-    record prior to writing it out to disk.
+    further calculations. It may be used to add annotation to a record
+    prior to writing it out to disk. If this method returns a value of
+    None, the record will not be written out. This can be used to
+    implement simple record filters.
     '''
     return record
 
-  def _build_tabrow(self, record, altnums, sample):
+  def _build_tabrow(self, record, altnums, call):
     '''
     Build a list of table row values using the internal dispatch table.
     '''
     rowvals = [ str(self._dispatch_column(x[1], record,
-                                          altnums, sample))
+                                          altnums, call))
                 for x in self.get_dispatch_table() ]
     return rowvals
   
-  def _dispatch_column(self, disp, record, altnum, sample):
+  def _dispatch_column(self, disp, record, altnum, call):
     '''
     Simple dispatch table interpreting method.
     '''
     if type(disp) == str:
       return disp
     else:
-      return disp((record, altnum, sample))
+      return disp((record, altnum, call))
 
   def convert(self, outfile):
     '''
@@ -118,6 +120,11 @@ class Vcf2Tab(VcfMeta):
         with catch_warnings(record=True) as warnlist:
           record = self.pre_record_hook(record)
 
+          # Returning None from pre_record_hook indicates that the
+          # record need not be written to output.
+          if record is None:
+            continue
+
           # One row per sample:snv call. Multiallelic records need handling.
           for call in record.samples:
             altnums = self.call_snv_genotype(call, record)
@@ -126,7 +133,7 @@ class Vcf2Tab(VcfMeta):
               # This should handle 0/1, 0/2, 1/1, 1/2 etc. (altnum
               # of -1 will indicate REF).
               altnums = [ x - 1 for x in altnums ]
-              rowvals = self._build_tabrow(record, altnums, call.sample)
+              rowvals = self._build_tabrow(record, altnums, call)
               out_fh.write("\t".join(rowvals) + "\n")
 
           # Count AnnotationWarnings, show all others.
@@ -161,27 +168,32 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
   '''
 
   def __init__(self, center='cruk.cam.ac.uk', control='control', status='Somatic',
-               source='WGS', sequencer='Illumina X10', *args, **kwargs):
+               source='WGS', sequencer='Illumina X10', gene_symbol_type='Hugo_Symbol',
+               gene_id_type='Entrez_Gene_Id', assembly_type='NCBI_Build', *args, **kwargs):
 
     super(Vcf2Maf, self).__init__(*args, **kwargs)
+    self.gene_id_type     = gene_id_type
+    self.gene_symbol_type = gene_symbol_type
+    self.assembly_type    = assembly_type
 
     # TRANSCRIPT and VEP tags below are included by the call to
-    # self.add_vep in the Vcf2Tab superclass.
+    # self.add_vep in the Vcf2Tab superclass. The listed functions are
+    # called with (record, altnums, call) as arguments.
     self._dispatch_table = [
-      ('Hugo_Symbol',                    lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
+      (gene_symbol_type,                 lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
       # NOTE this is not actually Entrez.
-      ('Entrez_Gene_Id',                 lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
+      (gene_id_type,                     lambda (x): ";".join(x[0].INFO['TRANSCRIPT']) ),
       ('Center',                         center),
       # Will be set from Vcf header upon initial file open.
-      ('NCBI_Build',                     None),
+      (assembly_type,                    None),
       ('Chromosome',                     lambda (x): x[0].CHROM ),
       ('Start_Position',                 lambda (x): x[0].POS ),
       ('End_Position',                   lambda (x): x[0].POS + len(x[0].REF) - 1 ),
       # The only MAF-supported strand type.
       ('Strand',                         '+'),
       # Here we limit the classification to just Tumor_Seq_Allele2
-      ('Variant_Classification',         lambda (x): VEP_MAP[ x[0].INFO['VEP'][x[1][1]] ] ),
-      ('Variant_Type',                   lambda (x): _detect_var_type(x[0]) ),
+      ('Variant_Classification',         lambda (x): VEP_MAP[ x[0].INFO[VEP_TAG][x[1][1]] ] ),
+      ('Variant_Type',                   lambda (x): detect_maf_var_type(x[0]) ),
       ('Reference_Allele',               lambda (x): x[0].REF),
       # This will generally be the reference allele, except for 1/1, 1/2 etc. calls.
       ('Tumor_Seq_Allele1',              lambda (x): x[0].REF if x[1][0] < 0 else str(x[0].ALT[x[1][0]]) ),
@@ -189,7 +201,7 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
       ('Tumor_Seq_Allele2',              lambda (x): x[0].REF if x[1][1] < 0 else str(x[0].ALT[x[1][1]]) ),
       ('dbSNP_RS',                       ''),
       ('dbSNP_Val_Status',               ''),
-      ('Tumor_Sample_Barcode',           lambda (x): x[2] ),
+      ('Tumor_Sample_Barcode',           lambda (x): x[2].sample ),
       ('Matched_Norm_Sample_Barcode',    control),
       ('Match_Norm_Seq_Allele1',         ''),
       ('Match_Norm_Seq_Allele2',         ''),
@@ -206,7 +218,7 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
       ('Score',                          'NA'),
       ('BAM_File',                       'NA'),
       ('Sequencer',                      sequencer),
-      ('Tumor_Sample_UUID',              lambda (x): x[2] ),
+      ('Tumor_Sample_UUID',              lambda (x): x[2].sample ),
       ('Matched_Norm_Sample_UUID',       control),
     ]
 
@@ -231,7 +243,7 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
     if assembly is None: # Fall back to generic header tags.
       mdat = dict(self.reader.metadata)
       if 'contig' in mdat and 'assembly' in mdat['contig'][0]:
-        assembs = list(set([ x['assembly'].strip('"') for x in mdat['contig'].values() ]))
+        assembs = list(set([ x['assembly'].strip('"') for x in mdat['contig'] ]))
         assembly = ";".join(assembs)
 
       elif 'reference' in mdat: # This is the most likely fallback at the moment.
@@ -241,8 +253,14 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
         assembly = 'unknown'
 
     # Modify the dispatch table on the fly.
-    assert self._dispatch_table[3][0] == 'NCBI_Build'
-    self._dispatch_table[3] = ('NCBI_Build', assembly)
+    found = False
+    for n in range(len(self._dispatch_table)):
+      if self._dispatch_table[n][0] == self.assembly_type:
+        self._dispatch_table[n] = (self.assembly_type, assembly)
+        found = True
+
+    if not found:
+      raise StandardError("Internal script error: assembly type column not set up correctly.")
 
     return
 
@@ -250,8 +268,8 @@ class Vcf2Maf(VcfAnnotator, Vcf2Tab):
     '''
     Add variant consequence (VEP) and affected TRANSCRIPT tags to the record.
     '''
-    if any( [ x not in record.INFO for x in ('VEP','TRANSCRIPT') ] ):
-      LOGGER.info("Inferring VEP tag for record %s:%s", record.CHROM, record.POS)
+    if any( [ x not in record.INFO for x in (VEP_TAG,'TRANSCRIPT') ] ):
+      LOGGER.info("Inferring %s tag for record %s:%s", VEP_TAG, record.CHROM, record.POS)
       record = self.add_vep(record)
 
     return record
@@ -280,7 +298,7 @@ class Vcf2OncodriveFML(Vcf2Tab):
       # is assuming Het throughout (ignores the first allele in the
       # genotype)
       ('ALT',        lambda (x): x[0].REF if x[1][1] < 0 else str(x[0].ALT[x[1][1]]) ),
-      ('SAMPLE',     lambda (x): x[2] ),
+      ('SAMPLE',     lambda (x): x[2].sample ),
     ]
 
   def get_dispatch_table(self):

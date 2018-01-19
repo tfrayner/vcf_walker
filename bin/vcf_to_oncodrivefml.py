@@ -20,7 +20,7 @@ if __name__ == '__main__':
   from argparse import ArgumentParser
 
   PARSER = ArgumentParser(\
-    description="Convert a VCF to MAF as best we can.")
+    description="Convert a VCF to the tab-delimited input format for OncodriveFML.")
 
   PARSER.add_argument('-i', '--input-file', dest='infile', type=str,
                       required=True, help="The name of the input VCF file.")
