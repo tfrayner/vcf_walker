@@ -12,7 +12,6 @@ import logging
 
 import vcf
 from vcf_walker.vcf2maf import Vcf2Maf, LOGGER, detect_maf_var_type
-from vcf_walker.constants import VEP_TAG
 
 ################################################################################
 class Vcf2LCEMaf(Vcf2Maf):
@@ -22,8 +21,8 @@ class Vcf2LCEMaf(Vcf2Maf):
 
     # called with (record, altnums, call) as arguments.
     self._dispatch_table = [
-      (self.gene_id_type,                lambda (x): ";".join(sorted(list(set(x[0].INFO['GENE_ID'])))) ),
-      (self.gene_symbol_type,            lambda (x): ";".join(sorted(list(set(x[0].INFO['GENE_NAME'])))) ),
+      (self.gene_id_type,                lambda (x): ";".join(x[0].INFO['GENE_ID']) ),
+      (self.gene_symbol_type,            lambda (x): ";".join(x[0].INFO['GENE_NAME']) ),
       # Will be set from Vcf header upon initial file open.
       (self.assembly_type,               None),
       ('Chromosome',                     lambda (x): x[0].CHROM ),
@@ -33,16 +32,16 @@ class Vcf2LCEMaf(Vcf2Maf):
       ('Variant_Context',                lambda (x): x[0].INFO['CONTEXT']),
       ('Variant_Allele_Frequency',       lambda (x): x[2].data.VAF),
       ('Variant_Filter',                 lambda (x): 'PASS' if x[0].FILTER is None else ','.join(x[0].FILTER)),
-      ('Variant_Classification',         lambda (x): x[0].INFO[VEP_TAG][x[1][1]] ),
+      # Note the next line no longer distinguishes between available
+      # ALT alleles. This may become a problem for unnormalised VCF
+      # inputs.
+      ('Variant_Classification',         lambda (x): ";".join(x[0].INFO['VEP']) ),
       ('Variant_Type',                   lambda (x): detect_maf_var_type(x[0]) ),
       ('Reference_Allele',               lambda (x): x[0].REF),
       # This will generally be the reference allele, except for 1/1, 1/2 etc. calls.
       ('Tumor_Seq_Allele1',              lambda (x): x[0].REF if x[1][0] < 0 else str(x[0].ALT[x[1][0]]) ),
       # Picks out the appropriate ALT allele.
       ('Tumor_Seq_Allele2',              lambda (x): x[0].REF if x[1][1] < 0 else str(x[0].ALT[x[1][1]]) ),
-      # These currently give potentially misleading output since the sort order here will differ from that for GENE_ID etc.
-#      ('Peptide_Position',               lambda (x): ";".join(sorted(list(set(x[0].INFO['PEP_POS'])))) ),
-#      ('Peptide_Variant',                lambda (x): ";".join(sorted(list(set(x[0].INFO['PEP_VAR'])))) ),
       ('Tumor_Sample_Barcode',           lambda (x): x[2].sample ),
     ]
 
@@ -55,11 +54,18 @@ class Vcf2LCEMaf(Vcf2Maf):
 
     # Pull out some of the more useful information from the VEP CSQ field.
     csqdat = [ csq.split('|') for csq in record.INFO['CSQ'] ]
-    record.INFO[VEP_TAG]     = [ csq[1] for csq in csqdat ]
-    record.INFO['GENE_ID']   = [ csq[4] for csq in csqdat ]
-    record.INFO['GENE_NAME'] = [ csq[3] for csq in csqdat ]
-    record.INFO['PEP_POS']   = [ csq[14] for csq in csqdat ]
-    record.INFO['PEP_VAR']   = [ csq[15] for csq in csqdat ]
+
+    # This attempts to maintain order across the gene ID, gene name
+    # and effect columns. We could extend this to transcript, peptide
+    # info but that may be more than is required.
+    record.INFO['VEP']           = []
+    record.INFO['GENE_ID']       = []
+    record.INFO['GENE_NAME']     = []
+    for n in range(len(csqdat)):
+      if not csqdat[n][4] in record.INFO['GENE_ID']:
+        record.INFO['VEP']       += [ csqdat[n][1] ]
+        record.INFO['GENE_ID']   += [ csqdat[n][4] ]
+        record.INFO['GENE_NAME'] += [ csqdat[n][3] ]
 
     return record
 
