@@ -31,7 +31,7 @@ class Vcf2LCEMaf(Vcf2Maf):
       ('Strand',                         '+'),
       ('Variant_Context',                lambda (x): x[0].INFO['CONTEXT']),
       ('Variant_Allele_Frequency',       lambda (x): x[2].data.VAF),
-      ('Variant_Filter',                 lambda (x): 'PASS' if x[0].FILTER is None else ','.join(x[0].FILTER)),
+      ('Variant_Filter',                 lambda (x): 'PASS' if (x[0].FILTER is None or len(x[0].FILTER) == 0) else ','.join(x[0].FILTER)),
       # Note the next line no longer distinguishes between available
       # ALT alleles. This may become a problem for unnormalised VCF
       # inputs.
@@ -88,10 +88,15 @@ class FilteredVcf2Maf(Vcf2LCEMaf):
     record to be output. If the record is to be filtered from the
     eventual output the method will return False.
     '''
-    # PyVCF sets PASS record.FILTER to None; we accept all such records.
-    if record.FILTER is not None and self.vcf_filter is not None:
-      if all([ term not in record.FILTER for term in self.vcf_filter ]):
-        return None
+    # PyVCF sets PASS record.FILTER to None.
+    if self.vcf_filter is not None:
+      # The exact contents of this field seem to vary by PyVCF version.
+      if record.FILTER is None or len(record.FILTER) == 0:
+        if not 'PASS' in self.vcf_filter:
+          return None
+      else:
+        if all([ term not in record.FILTER for term in self.vcf_filter ]):
+          return None
 
     if self.vaf_cutoff is not None:
       if 'VAF' not in record.FORMAT.split(':'):
