@@ -53,7 +53,10 @@ class Vcf2LCEMaf(Vcf2Maf):
       raise StandardError("CSQ and/or CONTEXT tags not found for record; cannot proceed.")
 
     # Pull out some of the more useful information from the VEP CSQ field.
-    csqdat = [ csq.split('|') for csq in record.INFO['CSQ'] ]
+    if type(record.INFO) is list:
+      csqdat = [ csq.split('|') for csq in record.INFO['CSQ'] ]
+    else:
+      csqdat = [ record.INFO['CSQ'].split('|') ]
 
     # This attempts to maintain order across the gene ID, gene name
     # and effect columns. We could extend this to transcript, peptide
