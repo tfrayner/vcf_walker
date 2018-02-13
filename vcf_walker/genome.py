@@ -10,7 +10,7 @@ from .vcf_meta import VcfMeta
 from .gene_model import VcfGeneModel
 from .utils import flexi_open
 
-LOGGER = logging.getLogger()
+LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler(sys.stdout))
 LOGGER.handlers[0].setFormatter(\
   logging.Formatter("[%(asctime)s]VEPANN_%(levelname)s: %(message)s"))

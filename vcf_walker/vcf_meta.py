@@ -14,10 +14,11 @@ from math import sqrt
 import vcf
 
 from . import __package_version__
-from .utils import AnnotationWarning, order, mean_and_sstdev, is_zipped
+from .utils import AnnotationWarning, order, mean_and_sstdev, is_zipped, \
+  GenotypingError, ReadDepthError
 from .constants import STRELKA_INDELS, STRELKA_ALLELES
 
-LOGGER = logging.getLogger()
+LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler(sys.stdout))
 LOGGER.handlers[0].setFormatter(\
   logging.Formatter("[%(asctime)s]VEPANN_%(levelname)s: %(message)s"))
@@ -56,7 +57,7 @@ class VcfMeta(object):
       record.FORMAT = 'GT:' + record.FORMAT 
     for call in record.samples:
       fields = call.data._asdict().keys()
-      gt = self._infer_genotype(call, record)
+      gt = self.infer_genotype(call, record)
       if 'GT' in fields:
         call.data = call.data._replace(GT=gt)
       else:
@@ -65,10 +66,14 @@ class VcfMeta(object):
     
     return record
 
-  def _infer_genotype(self, call, record):
+  def infer_genotype(self, call, record):
     '''
-    Infer our genotype call (currently assumes Strelka SNV input).
+    Infer our genotype call (currently assumes Strelka SNV or indel
+    input). May be overridden in subclasses, e.g. to add support for
+    other input types such as Manta SVs.
     '''
+    if 'DP' not in call.data._asdict().keys():
+      raise GenotypingError("Strelka DP read depth field not found in call tags.")
 
     # First, handle null calls in merged VCFs.
     if call.data.DP is None or call.data.DP == 0:
@@ -208,12 +213,11 @@ class VcfMeta(object):
 
     return record
 
-  def flag_germline_variants(self, record, threshold=0.05, somatic_likelihood=0.98):
-    '''This method identifies sample/record signs of germline
-    contamination and returns a list of such records, split into
-    multiple source groups if necessary, annotated with an appropriate
-    FILTER flag.
-    
+  def calc_germline_probability(self, record, hits, num_srcs, somatic_likelihood=0.98):
+    '''
+    Calculate the probability that the nth call in the given record is
+    germline-derived (as opposed to somatic).
+
     The algorithm is briefly described as follows:
 
     For each locus, calculate the likely minimum read depth available
@@ -228,13 +232,54 @@ class VcfMeta(object):
     practice, somatic_likelihood=0.98 will only allow the 2-sample
     case; increase to 0.985 to include the 3-sample case. Reduce to
     zero to remove the fudge entirely.
+    '''
+    num_vars = sum(hits)
+    assert num_vars > 1
+    assert num_srcs > 1
 
+    if 'DP' not in record.FORMAT.split(':'):
+      raise ReadDepthError("Unable to perform germline probability calculation without DP tag.")
+
+    # The minimum read depth that is likely for uncalled samples
+    # (based on the depth at called samples; this assumes bulk
+    # coverage is equivalent across all samples, which for the
+    # current project is a reasonable assumption). The len(depths) must be >= 2.
+    depths = [ record.samples[n].data.DP for n in range(len(hits)) if hits[n] ]
+    (mu, sd) = mean_and_sstdev(depths)
+    lower_bound = mu - (sd / sqrt(num_vars)) # Mean - SEM
+    lower_bound -= 1 # Strelka would need more than one read to call a variant.
+    LOGGER.debug("Lower bound: %.2f", lower_bound)
+
+    # The probability that the uncalled samples are actually false
+    # negatives, and are instead germline variants with VAF of
+    # 0.5.
+    fnp = min( 1, (0.5 ** lower_bound) ** (num_srcs - num_vars) )
+
+    # The probability that none of the called variants are actually
+    # somatic. This is a fudge to allow variants called in 2-3
+    # samples from a single source to contribute to the outcome.
+    somp = 1 - (somatic_likelihood ** num_vars)
+
+    # The probability that this source has germline contamination
+    # (fnp, with the somp fudge).
+    prob_germline = somp * fnp
+
+    return prob_germline
+
+  def flag_germline_variants(self, record, threshold=0.05):
+    '''This method identifies sample/record signs of germline
+    contamination and returns a list of such records, split into
+    multiple source groups if necessary, annotated with an appropriate
+    FILTER flag.
+    
     The reality is that most germline contaminants will be detected as
     an ALT call in every sample from that mouse, but for low coverage
     regions we can also accept thresholds a bit lower than 100%.
 
     '''
     source_matches = [ self.source_regex.search(call.sample) for call in record.samples ]
+    if any([ x is None for x in source_matches ]):
+      raise StandardError("Source regex fails to match at least one sample.")
     sources        = [ mobj.group(1) for mobj in source_matches ]
     srcset         = list(set(sources))
 
@@ -253,29 +298,7 @@ class VcfMeta(object):
         if num_vars <= 1: # Some sources will simply have one or no variants at this locus.
           continue        # We shortcut the calculation in such cases.
 
-        # The minimum read depth that is likely for uncalled samples
-        # (based on the depth at called samples; this assumes bulk
-        # coverage is equivalent across all samples, which for the
-        # current project is a reasonable assumption). The len(depths) must be >= 2.
-        depths = [ record.samples[n].data.DP for n in range(len(sources)) if hits[n] ]
-        (mu, sd) = mean_and_sstdev(depths)
-        lower_bound = mu - (sd / sqrt(num_vars)) # Mean - SEM
-        lower_bound -= 1 # Strelka would need more than one read to call a variant.
-        LOGGER.debug("Lower bound: %.2f", lower_bound)
-
-        # The probability that the uncalled samples are actually false
-        # negatives, and are instead germline variants with VAF of
-        # 0.5.
-        fnp = min( 1, (0.5 ** lower_bound) ** (num_srcs - num_vars) )
-
-        # The probability that none of the called variants are actually
-        # somatic. This is a fudge to allow variants called in 2-3
-        # samples from a single source to contribute to the outcome.
-        somp = 1 - (somatic_likelihood ** num_vars)
-
-        # The probability that this source has germline contamination
-        # (fnp, with the somp fudge).
-        prob_germline = somp * fnp
+        prob_germline = self.calc_germline_probability(record, hits, num_srcs)
 
         LOGGER.debug("Germline probability: %.2f", prob_germline)
 

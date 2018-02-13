@@ -20,7 +20,8 @@ from vcf.model import _Record       as VcfRecord
 from vcf.model import _Call         as VcfCall
 
 from .genome import VcfGenome, LOGGER
-from .utils import AnnotationWarning, cumsum, order, mean_and_sstdev
+from .utils import AnnotationWarning, cumsum, order, mean_and_sstdev, \
+  GenotypingError, ReadDepthError
 from .cds import check_splicesites, decide_indel_or_nonsense, \
   get_cds_repr, trim_hanging_cds_end, spliced_cds_sequence, \
   generate_mutant_cds, get_subfeatures
@@ -320,6 +321,48 @@ class VcfAnnotator(VcfGenome):
     record.INFO['CONTEXT'] = "".join(context)
 
     return record
+
+  def infer_genotype(self, call, record):
+    '''
+    Override the default genotype inference to add dummy GT terms for
+    manta SV records. This will be called by self.add_genotypes.
+    '''
+    rc = None
+
+    try:
+      rc = super(VcfAnnotator, self).infer_genotype(call, record)
+
+    except GenotypingError, err:
+
+      warn("Cannot infer full diploid genotype; possible Manta SV record?")
+
+      # If any field contains meaningful data, we assume this is an
+      # ALT call of some kind. We currently code this as a haploid ALT
+      # call since we have no further info available.
+      cdict = call.data._asdict()
+      if any([ val is not None for val in cdict.values() ]):
+        rc = '1'
+
+    return rc
+
+  def calc_germline_probability(self, record, hits, num_srcs):
+    '''
+    Override the germline probability calculations for records lacking
+    DP tags (e.g. Manta SV records). In their absence, germline
+    records are called if there are three or more samples from a
+    common source, all of which share the same variant.
+    '''
+    prob = 0
+    try:
+      prob = super(VcfAnnotator, self).calc_germline_probability(record, hits, num_srcs)
+
+    except ReadDepthError, err:
+      warn("Unable to perform standard germline probability calculation."
+           + " Falling back to simple heuristic.")
+      if num_srcs >= 3 and num_srcs == sum(hits):
+        prob = 1
+
+    return prob
 
   def _annotate_record(self, record):
     '''

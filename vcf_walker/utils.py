@@ -14,6 +14,19 @@ class AnnotationWarning(UserWarning):
   '''
   pass
 
+class GenotypingError(Exception):
+  '''
+  Error encountered in genotyping samples. May indicate that the
+  record does not contain the expected FORMAT tags.
+  '''
+  pass
+
+class ReadDepthError(Exception):
+  '''
+  Operation attempted which requires of DP tags, which are absent.
+  '''
+  pass
+
 ################################################################################
 
 @contextmanager
