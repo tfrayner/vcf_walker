@@ -123,9 +123,9 @@ class VcfMeta(object):
     allowable = record.alleles
 
     # Identify the top allele candidates in descending order;
-    # requires at least two tier1 reads to be detected for any given
-    # allele. This is not particularly stringent.
-    gt_all    = [ STRELKA_ALLELES[n][0] for n in ord[::-1] if tier1[n] >= 2 ]
+    # requires at least one tier1 read to be detected for any given
+    # allele. This is not at all stringent.
+    gt_all    = [ STRELKA_ALLELES[n][0] for n in ord[::-1] if tier1[n] >= 1 ]
 
     # Filter out invalid alleles.
     gt_all    = [ base for base in gt_all if base in allowable ]
@@ -134,7 +134,7 @@ class VcfMeta(object):
     if len(gt_all) == 1 or (self.homozygous_normal and call.sample == 'NORMAL'):
       gt_all = [ gt_all[0], gt_all[0] ]
 
-    # Trim off any spare alleles to take just the top two.
+    # Trim off any spare alleles to take just the top two based on read depth.
     gt_all    = gt_all[:2]
 
     # Convert to [ 0, 1 ] etc.
